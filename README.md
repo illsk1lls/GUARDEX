@@ -1,12 +1,12 @@
-# GUARDEX
+# GUARDEX Defense System
 
-Tray app that watches the machine it is running on.
+It is an automated defense against automated attack tools, including ones that local models drive.
 
-It is for automated attack tools, including ones that drive a local model. They tend to hit a few things, go quiet while the model thinks, then come back. That quiet stretch can be a couple of seconds or many minutes. The fast part, the actual requests, gets scored too.
+Patterns are recognized and traffic is stopped. This build is a rough first framework based on information gathered from ARTEX
 
 Click the shield in the tray. The switch turns watching on or off. Open GUARDEX shows the window. It reports. It does not change your firewall.
 
-Early build. One machine for now.
+This build monitors a single machine using a local llm.
 
 ## Run
 
