@@ -1,6 +1,6 @@
 # GUARDEX Defense System
 
-It is an automated defense against automated attack tools, including ones that local models drive.
+An automated defense against automated attack tools, including ones that local models drive.
 
 Patterns are recognized and traffic is stopped. This build is a rough first framework based on information gathered from ARTEX
 
