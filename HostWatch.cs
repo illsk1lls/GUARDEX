@@ -1,0 +1,257 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using Microsoft.Diagnostics.Tracing;
+using Microsoft.Diagnostics.Tracing.Session;
+
+namespace Guardex;
+
+// Single-machine sensor. A later firewall box would push the same Observation objects.
+sealed class HostWatch
+{
+	readonly SessionStore _store;
+	readonly LocalJudge _judge;
+	readonly Dictionary<int, string> _proc = [];
+	CancellationTokenSource? _cts;
+
+	public HostWatch(SessionStore store, LocalJudge judge)
+	{
+		_store = store;
+		_judge = judge;
+	}
+
+	public bool IsRunning => _cts is not null;
+
+	public void Start()
+	{
+		if (_cts is not null) return;
+		var cts = new CancellationTokenSource();
+		_cts = cts;
+		var ct = cts.Token;
+		_store.SetStatus(true, "on");
+		Task.Run(() => TcpLoop(ct), ct);
+		Task.Run(() => HttpLoop(ct), ct);
+	}
+
+	public void Stop()
+	{
+		var cts = _cts;
+		_cts = null;
+		if (cts is null) return;
+		try { cts.Cancel(); } catch { }
+		_store.SetStatus(true, "off");
+		_store.SetStatus(false, "off");
+		_store.SetModel("paused");
+	}
+
+	void TcpLoop(CancellationToken ct)
+	{
+		var prev = new HashSet<string>(StringComparer.Ordinal);
+		while (!ct.IsCancellationRequested)
+		{
+			try
+			{
+				var rows = TcpTable.Snapshot();
+				var listen = new HashSet<int>();
+				foreach (var row in rows)
+				{
+					if (row.State == 2 && row.LocalPort > 0) listen.Add(row.LocalPort);
+				}
+				_store.SetListenPorts(listen);
+
+				var now = new HashSet<string>(StringComparer.Ordinal);
+				foreach (var row in rows)
+				{
+					if (row.State is not (4 or 5 or 8 or 11)) continue;
+					if (!listen.Contains(row.LocalPort)) continue;
+					if (Skip(row.Remote)) continue;
+					var key = row.Remote + "|" + row.RemotePort + "|" + row.LocalPort;
+					now.Add(key);
+					if (prev.Contains(key)) continue;
+					var verdict = _store.Add(new Observation
+					{
+						Utc = DateTime.UtcNow,
+						Src = row.Remote,
+						LocalPort = row.LocalPort,
+						LocalProcess = ProcessName(row.Pid),
+						Kind = ObsKind.Tcp,
+						Method = "TCP"
+					});
+					MaybeJudge(verdict, ct);
+				}
+				prev = now;
+			}
+			catch (Exception ex)
+			{
+				_store.SetStatus(true, "error: " + ex.Message);
+			}
+			ct.WaitHandle.WaitOne(500);
+		}
+	}
+
+	void MaybeJudge(Verdict? verdict, CancellationToken ct)
+	{
+		if (verdict is not { Gray: true }) return;
+		var src = verdict.Src;
+		var score = verdict.Score;
+		_ = Task.Run(() => _judge.ConsiderAsync(src, score, ct));
+	}
+
+	void HttpLoop(CancellationToken ct)
+	{
+		try
+		{
+			using var session = new TraceEventSession("GuardexHttp");
+			session.StopOnDispose = true;
+			session.EnableProvider("Microsoft-Windows-HttpService", TraceEventLevel.Verbose, ulong.MaxValue);
+			session.Source.Dynamic.All += data =>
+			{
+				try { OnHttp(data, ct); }
+				catch { }
+			};
+			_store.SetStatus(false, ct.IsCancellationRequested ? "off" : "on");
+			if (ct.IsCancellationRequested) return;
+			using var reg = ct.Register(() => { try { session.Stop(); } catch { } });
+			session.Source.Process();
+		}
+		catch (UnauthorizedAccessException)
+		{
+			_store.SetStatus(false, "needs elevation for request paths and user-agents");
+		}
+		catch (Exception ex)
+		{
+			_store.SetStatus(false, "off: " + ex.Message);
+		}
+	}
+
+	void OnHttp(TraceEvent data, CancellationToken ct)
+	{
+		var path = Payload(data, "Url", "RequestUrl", "URI", "url");
+		var method = Payload(data, "Verb", "Method", "HttpMethod");
+		var src = Payload(data, "RemoteAddress", "ClientIp", "SrcIp", "RemoteIp");
+		var statusText = Payload(data, "StatusCode", "Status", "HttpStatus");
+		var ua = Payload(data, "UserAgent", "User-Agent");
+		if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(src)) return;
+		if (string.IsNullOrWhiteSpace(src)) return;
+		src = src.Trim();
+		if (Skip(src)) return;
+		var query = "";
+		var clean = path ?? "/";
+		var q = clean.IndexOf('?');
+		if (q >= 0)
+		{
+			query = clean[(q + 1)..];
+			clean = clean[..q];
+		}
+		if (clean.Length == 0) clean = "/";
+		int.TryParse(statusText, out var status);
+		int.TryParse(Payload(data, "LocalPort", "SrcPort", "ServerPort"), out var port);
+		var verdict = _store.Add(new Observation
+		{
+			Utc = DateTime.UtcNow,
+			Src = src,
+			LocalPort = port,
+			Kind = ObsKind.Http,
+			Path = clean.Length > 180 ? clean[..180] : clean,
+			Query = query.Length > 80 ? query[..80] : query,
+			Method = string.IsNullOrWhiteSpace(method) ? "GET" : method,
+			Status = status,
+			UserAgent = ua ?? "",
+			Headers = string.IsNullOrWhiteSpace(ua) ? [] : ["user-agent"]
+		});
+		MaybeJudge(verdict, ct);
+	}
+
+	static string? Payload(TraceEvent data, params string[] names)
+	{
+		foreach (var name in data.PayloadNames)
+		{
+			foreach (var want in names)
+			{
+				if (!name.Equals(want, StringComparison.OrdinalIgnoreCase)) continue;
+				var i = data.PayloadIndex(name);
+				if (i < 0) continue;
+				var value = data.PayloadValue(i);
+				return value?.ToString();
+			}
+		}
+		return null;
+	}
+
+	static bool Skip(string ip)
+	{
+		if (string.IsNullOrWhiteSpace(ip)) return true;
+		if (ip is "0.0.0.0" or "127.0.0.1" or "::1" or "::") return true;
+		if (IPAddress.TryParse(ip, out var addr) && IPAddress.IsLoopback(addr)) return true;
+		return false;
+	}
+
+	string ProcessName(int pid)
+	{
+		if (pid <= 0) return "";
+		if (_proc.TryGetValue(pid, out var name)) return name;
+		try { name = System.Diagnostics.Process.GetProcessById(pid).ProcessName; }
+		catch { name = ""; }
+		if (_proc.Count > 400) _proc.Clear();
+		_proc[pid] = name;
+		return name;
+	}
+}
+
+static class TcpTable
+{
+	const int AfInet = 2;
+	const int OwnerPidAll = 5;
+
+	[DllImport("iphlpapi.dll", SetLastError = true)]
+	static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, int family, int tableClass, uint reserved);
+
+	public static List<Row> Snapshot()
+	{
+		var size = 0;
+		GetExtendedTcpTable(IntPtr.Zero, ref size, true, AfInet, OwnerPidAll, 0);
+		if (size <= 0) return [];
+		var buf = Marshal.AllocHGlobal(size);
+		try
+		{
+			var rc = GetExtendedTcpTable(buf, ref size, true, AfInet, OwnerPidAll, 0);
+			if (rc != 0) return [];
+			var count = Marshal.ReadInt32(buf);
+			var rowSize = Marshal.SizeOf<MibTcpRowOwnerPid>();
+			var list = new List<Row>(count);
+			var ptr = buf + 4;
+			for (var i = 0; i < count; i++)
+			{
+				var row = Marshal.PtrToStructure<MibTcpRowOwnerPid>(ptr);
+				list.Add(new Row(Ip(row.LocalAddr), Port(row.LocalPort), Ip(row.RemoteAddr), Port(row.RemotePort), (int)row.State, (int)row.OwningPid));
+				ptr += rowSize;
+			}
+			return list;
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(buf);
+		}
+	}
+
+	static int Port(uint p) => ((int)(p & 0xFF) << 8) | (int)((p >> 8) & 0xFF);
+
+	static string Ip(uint addr)
+	{
+		var b = BitConverter.GetBytes(addr);
+		return $"{b[0]}.{b[1]}.{b[2]}.{b[3]}";
+	}
+
+	public readonly record struct Row(string Local, int LocalPort, string Remote, int RemotePort, int State, int Pid);
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct MibTcpRowOwnerPid
+	{
+		public uint State;
+		public uint LocalAddr;
+		public uint LocalPort;
+		public uint RemoteAddr;
+		public uint RemotePort;
+		public uint OwningPid;
+	}
+}
