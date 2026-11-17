@@ -126,6 +126,7 @@ static class Scorer
 			Score = score,
 			Band = band,
 			Gray = !hard && score >= 25 && score <= 69,
+			Hard = hard,
 			Count = items.Count,
 			SpanSec = items.Count < 2 ? 0 : (items[^1].Utc - items[0].Utc).TotalSeconds,
 			Pace = pace,
@@ -150,11 +151,11 @@ static class Scorer
 		if (v.Band == "watch")
 			return ("watch", "Keep this source. The score is not high enough to act.");
 		if (v.Band == "block")
-			return ("block", "Drop this source on the host. Guardex does not create a firewall rule.");
+			return ("block", "Drop new connections from this source.");
 		if (v.Signals.Any(s => s.Name is "slow_cycle" or "episodic"))
 			return ("tarpit", "A slow reply spends the quiet time while their model is already the slow part. A 429 only brakes a client that bothers to read it.");
 		if (v.Signals.Any(s => s.Name == "port_sweep"))
-			return ("block", "A browser check does not stop a port sweep. Dropping the source is the useful response. Guardex does not create the rule.");
+			return ("block", "A browser check does not stop a port sweep. Drop new connections from this source.");
 		return ("challenge", "A browser check stops a bare HTTP client. A worker driving a real browser can pass it. A pass means watch that source more closely.");
 	}
 

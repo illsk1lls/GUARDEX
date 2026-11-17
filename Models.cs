@@ -31,6 +31,7 @@ sealed class Verdict
 	public int Score { get; set; }
 	public string Band { get; set; } = "allow";
 	public bool Gray { get; set; }
+	public bool Hard { get; init; }
 	public int Count { get; init; }
 	public double SpanSec { get; init; }
 	public string Pace { get; init; } = "";
@@ -51,4 +52,39 @@ sealed class FeedItem
 {
 	public DateTime Utc { get; init; }
 	public string Text { get; init; } = "";
+}
+
+public sealed class Finding
+{
+	public string Id { get; init; } = "";
+	public string Kind { get; init; } = "";
+	public string Name { get; init; } = "";
+	public string Location { get; init; } = "";
+	public string Detail { get; init; } = "";
+	public string Severity { get; set; } = "";
+	public string Why { get; set; } = "";
+	public bool IsNew { get; init; }
+	public string Judge { get; set; } = "";
+	public string Reason { get; set; } = "";
+}
+
+public sealed class BlockRow
+{
+	public string Src { get; init; } = "";
+	public string Origin { get; init; } = "";
+	public string Scenario { get; init; } = "";
+	public string Until { get; init; } = "";
+	public string State { get; init; } = "";
+	public string Why { get; init; } = "";
+	public string Note { get; init; } = "";
+}
+
+public sealed class RemoteRow
+{
+	public string Id { get; init; } = "";
+	public string Name { get; init; } = "";
+	public string Line { get; init; } = "";
+	public string State { get; init; } = "";
+	public bool Allowed { get; set; }
+	public bool Running { get; init; }
 }

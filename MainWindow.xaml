@@ -2,48 +2,295 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="GUARDEX"
-        Width="980" Height="660"
-        MinWidth="760" MinHeight="480"
+        Width="1040" Height="720"
+        MinWidth="840" MinHeight="560"
         Background="#121611"
         Foreground="#E4ECDF"
+        FontFamily="Segoe UI"
         WindowStartupLocation="CenterScreen"
         Closing="OnClosing">
+  <Window.Resources>
+    <Style x:Key="Chip" TargetType="Border">
+      <Setter Property="Background" Value="#1B2119"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="8,4"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#273222"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Background" Value="#1B2119"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="CaretBrush" Value="#E4ECDF"/>
+      <Setter Property="FontFamily" Value="Consolas"/>
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="Margin" Value="0,2,0,2"/>
+    </Style>
+    <Style TargetType="ListBox">
+      <Setter Property="Background" Value="#1B2119"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    </Style>
+    <Style TargetType="ListBoxItem">
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Padding" Value="8,6"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+              <ContentPresenter/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#273222"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#222A20"/>
+              </Trigger>
+              <MultiTrigger>
+                <MultiTrigger.Conditions>
+                  <Condition Property="IsSelected" Value="True"/>
+                  <Condition Property="IsMouseOver" Value="True"/>
+                </MultiTrigger.Conditions>
+                <Setter TargetName="Bd" Property="Background" Value="#314232"/>
+              </MultiTrigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
   <DockPanel Margin="18">
     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-      <TextBlock Text="GUARDEX" FontSize="20" FontWeight="SemiBold"/>
-      <TextBlock x:Name="Summary" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,6,0,8"/>
-      <TextBlock x:Name="Status" FontFamily="Consolas" Foreground="#8EA088"/>
+      <DockPanel LastChildFill="True">
+        <Path DockPanel.Dock="Left" Width="18" Height="22" Stretch="Fill" Fill="#8FB573" Data="M9,0 L18,3.5 L16.5,12 L9,22 L1.5,12 L0,3.5 Z" Margin="0,2,10,0"/>
+        <StackPanel>
+          <TextBlock Text="GUARDEX" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Text="This machine" Foreground="#8EA088" FontSize="12"/>
+        </StackPanel>
+      </DockPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+        <Border Style="{StaticResource Chip}"><TextBlock x:Name="TcpChip"/></Border>
+        <Border Style="{StaticResource Chip}"><TextBlock x:Name="HttpChip"/></Border>
+        <Border Style="{StaticResource Chip}"><TextBlock x:Name="ModelChip"/></Border>
+        <Border Style="{StaticResource Chip}"><TextBlock x:Name="ListenChip"/></Border>
+      </StackPanel>
+      <DockPanel Margin="0,12,0,0" LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <TextBlock x:Name="EnforceState" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#8EA088"/>
+          <Button x:Name="EnforceButton" Content="Block new connections" Click="OnEnforce"/>
+        </StackPanel>
+        <TextBlock Text="Local model" Foreground="#8EA088" FontSize="12" Margin="0,0,0,4"/>
+      </DockPanel>
+      <DockPanel Margin="0,4,0,0" LastChildFill="True">
+        <Button x:Name="ConnectButton" DockPanel.Dock="Right" Content="Connect" Click="OnConnect" Margin="8,0,0,0"/>
+        <TextBlock x:Name="ReadyMark" DockPanel.Dock="Right" Text="✓" FontSize="16" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="#8FB573" Visibility="Collapsed"/>
+        <TextBox x:Name="Endpoint" Height="28" VerticalContentAlignment="Center" Padding="6,0" LostFocus="OnEndpointLostFocus"/>
+      </DockPanel>
     </StackPanel>
-    <TextBox x:Name="Feed" DockPanel.Dock="Bottom" Height="120" Margin="0,12,0,0" IsReadOnly="True"
-             Background="#1B2119" Foreground="#8EA088" BorderBrush="#2C3828" FontFamily="Consolas"
-             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+
+    <Border x:Name="RemoteBanner" DockPanel.Dock="Top" Visibility="Collapsed" Background="#3A2424" CornerRadius="6" Padding="10,8" Margin="0,0,0,12">
+      <TextBlock x:Name="RemoteBannerText" TextWrapping="Wrap" Foreground="#F0C9C9"/>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Left" Width="148" Margin="0,0,14,0">
+      <Button x:Name="NavTraffic" Content="Traffic" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavBlocks" Content="Blocks" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavHost" Content="Host" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavRemote" Content="Remote" Click="OnNav" HorizontalContentAlignment="Left"/>
+    </StackPanel>
+
     <Grid>
+    <Grid x:Name="TrafficPage">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="132"/>
+      </Grid.RowDefinitions>
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="1.25*"/>
+          <ColumnDefinition Width="12"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <DockPanel Grid.Column="0">
+          <TextBlock DockPanel.Dock="Top" Text="SOURCES" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <TextBlock x:Name="PortsLine" DockPanel.Dock="Bottom" Margin="0,8,0,0" Foreground="#8EA088" TextWrapping="Wrap"/>
+          <ListBox x:Name="Sources" SelectionChanged="OnSelect">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Right" Text="{Binding Score}" FontFamily="Consolas" Width="36" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                  <Border CornerRadius="3" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center" MinWidth="84">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Background" Value="#243024"/>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding Band}" Value="block"><Setter Property="Background" Value="#5A3030"/></DataTrigger>
+                          <DataTrigger Binding="{Binding Band}" Value="challenge"><Setter Property="Background" Value="#5A4528"/></DataTrigger>
+                          <DataTrigger Binding="{Binding Band}" Value="watch"><Setter Property="Background" Value="#4A4528"/></DataTrigger>
+                          <DataTrigger Binding="{Binding Band}" Value="allow"><Setter Property="Background" Value="#2C3A2C"/></DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding Band}" FontFamily="Consolas"/>
+                  </Border>
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Src}" FontFamily="Consolas"/>
+                    <TextBlock Text="{Binding Cycle}" Foreground="#8EA088" FontFamily="Consolas" FontSize="12"/>
+                  </StackPanel>
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+        <DockPanel Grid.Column="2">
+          <TextBlock DockPanel.Dock="Top" Text="SELECTED" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <TextBox x:Name="Detail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+        </DockPanel>
+      </Grid>
+      <DockPanel Grid.Row="1" Margin="0,12,0,0">
+        <TextBlock DockPanel.Dock="Top" Text="ACTIVITY" Foreground="#8EA088" Margin="0,0,0,8"/>
+        <TextBox x:Name="Feed" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+      </DockPanel>
+    </Grid>
+
+    <Grid x:Name="BlocksPage" Visibility="Collapsed">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="1.3*"/>
+        <ColumnDefinition Width="1.25*"/>
         <ColumnDefinition Width="12"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
       <DockPanel Grid.Column="0">
-        <TextBlock DockPanel.Dock="Top" Text="SOURCES" Foreground="#8EA088" Margin="0,0,0,8"/>
-        <ListBox x:Name="Sources" Background="#1B2119" BorderBrush="#2C3828" Foreground="#E4ECDF"
-                 SelectionChanged="OnSelect">
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
+                   Text="A block lasts a short time, then longer if the source comes back. Rules clear when GUARDEX exits."/>
+        <ListBox x:Name="Blocks" SelectionChanged="OnBlockSelect">
           <ListBox.ItemTemplate>
             <DataTemplate>
-              <StackPanel Orientation="Horizontal" Margin="2">
-                <TextBlock Text="{Binding Src}" FontFamily="Consolas" Width="150"/>
-                <TextBlock Text="{Binding Band}" FontFamily="Consolas" Width="90"/>
-                <TextBlock Text="{Binding Score}" FontFamily="Consolas" Width="40"/>
-                <TextBlock Text="{Binding Cycle}" FontFamily="Consolas" Foreground="#8EA088"/>
-              </StackPanel>
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding Until}" FontFamily="Consolas" VerticalAlignment="Center"/>
+                <StackPanel>
+                  <TextBlock Text="{Binding Src}" FontFamily="Consolas"/>
+                  <TextBlock Foreground="#8EA088" FontSize="12">
+                    <Run Text="{Binding State}"/><Run Text="  "/><Run Text="{Binding Origin}"/><Run Text="  "/><Run Text="{Binding Scenario}"/>
+                  </TextBlock>
+                </StackPanel>
+              </DockPanel>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
       </DockPanel>
       <DockPanel Grid.Column="2">
-        <TextBlock DockPanel.Dock="Top" Text="SELECTED" Foreground="#8EA088" Margin="0,0,0,8"/>
-        <TextBox x:Name="Detail" IsReadOnly="True" Background="#1B2119" Foreground="#E4ECDF"
-                 BorderBrush="#2C3828" FontFamily="Consolas" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+        <Button DockPanel.Dock="Bottom" Content="Release" Click="OnRelease" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+        <TextBlock DockPanel.Dock="Top" Text="BLOCK" Foreground="#8EA088" Margin="0,0,0,8"/>
+        <TextBox x:Name="BlockDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
       </DockPanel>
+    </Grid>
+
+    <Grid x:Name="HostPage" Visibility="Collapsed">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <TextBlock x:Name="PostureStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8"/>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="1.25*"/>
+          <ColumnDefinition Width="12"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <DockPanel Grid.Column="0">
+          <TextBlock DockPanel.Dock="Top" Text="START ITEMS" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <ListBox x:Name="Findings" SelectionChanged="OnFindingSelect">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <DockPanel>
+                  <Border CornerRadius="3" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center" MinWidth="64">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Background" Value="#4A4528"/>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding Severity}" Value="block"><Setter Property="Background" Value="#5A3030"/></DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding Severity}" FontFamily="Consolas"/>
+                  </Border>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}"/>
+                    <TextBlock Text="{Binding Kind}" Foreground="#8EA088" FontSize="12"/>
+                  </StackPanel>
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+        <DockPanel Grid.Column="2">
+          <TextBlock DockPanel.Dock="Top" Text="DETAIL" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <TextBox x:Name="HostDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+        </DockPanel>
+      </Grid>
+    </Grid>
+
+    <Grid x:Name="RemotePage" Visibility="Collapsed">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <TextBlock x:Name="RemoteHead" TextWrapping="Wrap" Margin="0,0,0,8"/>
+      <TextBlock Grid.Row="1" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
+                 Text="None of these are allowed until you check them. A checked tool is left alone. The list is the whole match. A normal program is not on it. A full-screen fake update is how some of these tools hide, so GUARDEX watches the tool."/>
+      <DockPanel Grid.Row="2" Margin="0,0,0,8">
+        <Button DockPanel.Dock="Right" Content="Allow none" Click="OnAllowNone"/>
+        <CheckBox x:Name="StopUnlisted" Content="Stop unlisted tools" IsChecked="True" Click="OnStopToggle" VerticalAlignment="Center"/>
+      </DockPanel>
+      <TextBlock x:Name="RemoteStatus" Grid.Row="2" Margin="0,28,0,0" Foreground="#E0C080" TextWrapping="Wrap"/>
+      <ListBox x:Name="RemoteList" Grid.Row="3">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="110"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <CheckBox Content="{Binding Name}" IsChecked="{Binding Allowed, Mode=TwoWay}" Click="OnAllowClick" FontSize="14"/>
+                <TextBlock Text="{Binding Line}" Foreground="#8EA088" TextWrapping="Wrap" Margin="22,2,8,0"/>
+              </StackPanel>
+              <TextBlock Grid.Column="1" Text="{Binding State}" HorizontalAlignment="Right" FontFamily="Consolas">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="#8EA088"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding State}" Value="Stopped"><Setter Property="Foreground" Value="#E0A0A0"/></DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="Needs admin"><Setter Property="Foreground" Value="#E0C080"/></DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="Running"><Setter Property="Foreground" Value="#E0A0A0"/></DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="Watching"><Setter Property="Foreground" Value="#E0C080"/></DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="Allowed"><Setter Property="Foreground" Value="#8FB573"/></DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
     </Grid>
   </DockPanel>
 </Window>

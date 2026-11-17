@@ -7,9 +7,21 @@ static class Program
 	{
 		if (args.Contains("--check"))
 		{
-			var result = Scorer.SelfCheck();
-			Console.WriteLine(result);
-			return result == "PASS" ? 0 : 1;
+			var parts = new[] { Scorer.SelfCheck(), PostureRules.SelfCheck(), RemoteCatalog.SelfCheck(), Enforcer.SelfCheck() };
+			if (parts.All(p => p == "PASS"))
+			{
+				Console.WriteLine("PASS");
+				return 0;
+			}
+			Console.WriteLine(string.Join("; ", parts.Where(p => p != "PASS")));
+			return 1;
+		}
+
+		if (args.Contains("--posture"))
+		{
+			foreach (var line in PostureWatch.Inspect())
+				Console.WriteLine(line);
+			return 0;
 		}
 
 		var app = new System.Windows.Application

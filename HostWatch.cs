@@ -11,13 +11,15 @@ sealed class HostWatch
 {
 	readonly SessionStore _store;
 	readonly LocalJudge _judge;
+	readonly Enforcer _enforcer;
 	readonly Dictionary<int, string> _proc = [];
 	CancellationTokenSource? _cts;
 
-	public HostWatch(SessionStore store, LocalJudge judge)
+	public HostWatch(SessionStore store, LocalJudge judge, Enforcer enforcer)
 	{
 		_store = store;
 		_judge = judge;
+		_enforcer = enforcer;
 	}
 
 	public bool IsRunning => _cts is not null;
@@ -77,7 +79,7 @@ sealed class HostWatch
 						Kind = ObsKind.Tcp,
 						Method = "TCP"
 					});
-					MaybeJudge(verdict, ct);
+					NoteVerdict(verdict, ct);
 				}
 				prev = now;
 			}
@@ -89,9 +91,12 @@ sealed class HostWatch
 		}
 	}
 
-	void MaybeJudge(Verdict? verdict, CancellationToken ct)
+	void NoteVerdict(Verdict? verdict, CancellationToken ct)
 	{
-		if (verdict is not { Gray: true }) return;
+		if (verdict == null) return;
+		_enforcer.OnVerdict(verdict, false);
+		var ask = verdict.Gray || (verdict.Band == "block" && !verdict.Hard);
+		if (!ask) return;
 		var src = verdict.Src;
 		var score = verdict.Score;
 		_ = Task.Run(() => _judge.ConsiderAsync(src, score, ct));
@@ -159,7 +164,7 @@ sealed class HostWatch
 			UserAgent = ua ?? "",
 			Headers = string.IsNullOrWhiteSpace(ua) ? [] : ["user-agent"]
 		});
-		MaybeJudge(verdict, ct);
+		NoteVerdict(verdict, ct);
 	}
 
 	static string? Payload(TraceEvent data, params string[] names)

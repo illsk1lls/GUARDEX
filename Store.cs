@@ -8,6 +8,14 @@ public sealed class SessionStore
 	readonly Dictionary<string, Verdict> _verdicts = new(StringComparer.Ordinal);
 	readonly List<FeedItem> _feed = [];
 	readonly List<int> _listenPorts = [];
+	readonly List<Finding> _findings = [];
+	readonly List<BlockRow> _blocks = [];
+	readonly List<RemoteRow> _remote = [];
+	string _enforce = "reporting";
+	string _posture = "not checked yet";
+	string _remoteAlert = "";
+	string _remoteStatus = "";
+	bool _stopUnlisted = true;
 	int _generation;
 
 	public string TcpStatus { get; private set; } = "starting";
@@ -101,11 +109,11 @@ public sealed class SessionStore
 	{
 		if (v.Band == "allow") return ("none", "The session sits in the allow band.");
 		if (v.Band == "watch") return ("watch", "Keep this source. The score is not high enough to act.");
-		if (v.Band == "block") return ("block", "Drop this source on the host. Guardex does not create a firewall rule.");
+		if (v.Band == "block") return ("block", "Drop new connections from this source.");
 		if (v.Signals.Any(s => s.Name is "slow_cycle" or "episodic" or "fast_cycle"))
 			return ("tarpit", "A slow reply spends the pause while their model thinks. Guardex does not apply it.");
 		if (v.Signals.Any(s => s.Name == "port_sweep"))
-			return ("block", "A browser check does not stop a port sweep. Guardex does not create a firewall rule.");
+			return ("block", "A browser check does not stop a port sweep. Drop new connections from this source.");
 		return ("challenge", "A browser check stops a bare HTTP client. A worker driving a real browser can pass it.");
 	}
 
@@ -171,9 +179,173 @@ public sealed class SessionStore
 				ListenCount = _listenPorts.Count,
 				ListenText = string.Join(", ", _listenPorts.Take(24)),
 				Sources = sources,
-				Feed = feed
+				Feed = feed,
+				Enforce = _enforce,
+				Posture = _posture,
+				RemoteAlert = _remoteAlert,
+				RemoteStatus = _remoteStatus,
+				StopUnlisted = _stopUnlisted,
+				Blocks = _blocks.ToList(),
+				Findings = _findings.ToList(),
+				Remote = _remote.ToList()
 			};
 		}
+	}
+
+	public void Note(string text)
+	{
+		if (string.IsNullOrWhiteSpace(text)) return;
+		lock (_gate)
+		{
+			_feed.Add(new FeedItem { Utc = DateTime.UtcNow, Text = text.Trim() });
+			if (_feed.Count > 80) _feed.RemoveRange(0, _feed.Count - 80);
+			_generation++;
+		}
+	}
+
+	internal Verdict? CopyVerdict(string src)
+	{
+		lock (_gate)
+		{
+			if (!_verdicts.TryGetValue(src, out var v)) return null;
+			return new Verdict
+			{
+				Src = v.Src,
+				Score = v.Score,
+				Band = v.Band,
+				Gray = v.Gray,
+				Hard = v.Hard,
+				Count = v.Count,
+				SpanSec = v.SpanSec,
+				Pace = v.Pace,
+				Cycle = v.Cycle,
+				ThinkMedianSec = v.ThinkMedianSec,
+				ThinkGaps = v.ThinkGaps,
+				Signals = v.Signals,
+				Action = v.Action,
+				Why = v.Why,
+				Judge = v.Judge,
+				Reason = v.Reason,
+				Ports = v.Ports,
+				Families = v.Families,
+				UpdatedUtc = v.UpdatedUtc
+			};
+		}
+	}
+
+	public List<Finding> CopyFindings()
+	{
+		lock (_gate) return _findings.ToList();
+	}
+
+	public void SetEnforce(string status)
+	{
+		lock (_gate)
+		{
+			if (_enforce == status) return;
+			_enforce = status;
+			_generation++;
+		}
+	}
+
+	public void SetFindings(List<Finding> items, string posture)
+	{
+		lock (_gate)
+		{
+			if (_posture == posture && SameFindings(_findings, items)) return;
+			_findings.Clear();
+			_findings.AddRange(items);
+			_posture = posture;
+			_generation++;
+		}
+	}
+
+	public void ApplyHostJudge(string id, string judge, string reason, string severity)
+	{
+		lock (_gate)
+		{
+			var item = _findings.FirstOrDefault(f => f.Id == id);
+			if (item == null) return;
+			if (item.Severity == "block") severity = "block";
+			if (item.Judge == judge && item.Reason == reason && item.Severity == severity) return;
+			var rose = item.Severity != "block" && severity == "block";
+			item.Judge = judge;
+			item.Reason = reason;
+			item.Severity = severity;
+			if (rose)
+			{
+				_feed.Add(new FeedItem { Utc = DateTime.UtcNow, Text = item.Name + " looks planted" });
+				if (_feed.Count > 80) _feed.RemoveRange(0, _feed.Count - 80);
+			}
+			_generation++;
+		}
+	}
+
+	public void SetBlocks(List<BlockRow> items)
+	{
+		lock (_gate)
+		{
+			if (SameBlocks(_blocks, items)) return;
+			_blocks.Clear();
+			_blocks.AddRange(items);
+			_generation++;
+		}
+	}
+
+	public void SetRemote(List<RemoteRow> rows, string alert, bool stopUnlisted)
+	{
+		lock (_gate)
+		{
+			if (_remoteAlert == alert && _stopUnlisted == stopUnlisted && SameRemote(_remote, rows)) return;
+			_remote.Clear();
+			_remote.AddRange(rows);
+			_remoteAlert = alert;
+			_stopUnlisted = stopUnlisted;
+			_generation++;
+		}
+	}
+
+	public void SetRemoteStatus(string text)
+	{
+		lock (_gate)
+		{
+			if (_remoteStatus == text) return;
+			_remoteStatus = text;
+			_generation++;
+		}
+	}
+
+	static bool SameFindings(List<Finding> left, List<Finding> right)
+	{
+		if (left.Count != right.Count) return false;
+		for (var i = 0; i < left.Count; i++)
+		{
+			if (left[i].Id != right[i].Id || left[i].Severity != right[i].Severity || left[i].Why != right[i].Why || left[i].Judge != right[i].Judge || left[i].Reason != right[i].Reason)
+				return false;
+		}
+		return true;
+	}
+
+	static bool SameBlocks(List<BlockRow> left, List<BlockRow> right)
+	{
+		if (left.Count != right.Count) return false;
+		for (var i = 0; i < left.Count; i++)
+		{
+			if (left[i].Src != right[i].Src || left[i].State != right[i].State || left[i].Until != right[i].Until || left[i].Scenario != right[i].Scenario || left[i].Note != right[i].Note)
+				return false;
+		}
+		return true;
+	}
+
+	static bool SameRemote(List<RemoteRow> left, List<RemoteRow> right)
+	{
+		if (left.Count != right.Count) return false;
+		for (var i = 0; i < left.Count; i++)
+		{
+			if (left[i].Id != right[i].Id || left[i].Allowed != right[i].Allowed || left[i].State != right[i].State || left[i].Line != right[i].Line)
+				return false;
+		}
+		return true;
 	}
 
 	static SourceRow ToRow(Verdict v)
@@ -212,6 +384,17 @@ public sealed class Dash
 	public string ListenText { get; init; } = "";
 	public List<SourceRow> Sources { get; init; } = [];
 	public List<string> Feed { get; init; } = [];
+	public string Enforce { get; init; } = "reporting";
+	public string Posture { get; init; } = "";
+	public string RemoteAlert { get; init; } = "";
+	public string RemoteStatus { get; init; } = "";
+	public bool StopUnlisted { get; init; } = true;
+	public List<BlockRow> Blocks { get; init; } = [];
+	public List<Finding> Findings { get; init; } = [];
+	public List<RemoteRow> Remote { get; init; } = [];
+	public int BlockCount => Blocks.Count;
+	public int FindingCount => Findings.Count;
+	public int RemoteHits => Remote.Count(r => r.State is "Stopped" or "Needs admin" or "Running" or "Watching");
 }
 
 public sealed class SourceRow

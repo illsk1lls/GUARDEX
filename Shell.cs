@@ -9,16 +9,25 @@ sealed class Shell
 {
 	readonly SessionStore _store = new();
 	readonly LocalJudge _judge;
+	readonly Enforcer _enforcer;
 	readonly HostWatch _watch;
+	readonly PostureWatch _posture;
+	readonly RemoteGuard _remote;
 	readonly NotifyIcon _icon;
 	readonly FlyoutWindow _flyout;
 	readonly MainWindow _window;
 	bool _enabled;
 
+	[DllImport("user32.dll")]
+	static extern bool MessageBeep(uint type);
+
 	public Shell()
 	{
 		_judge = new LocalJudge(_store);
-		_watch = new HostWatch(_store, _judge);
+		_enforcer = new Enforcer(_store);
+		_watch = new HostWatch(_store, _judge, _enforcer);
+		_posture = new PostureWatch(_store, _judge);
+		_remote = new RemoteGuard(_store);
 		_store.Canary = Environment.GetEnvironmentVariable("GUARDEX_CANARY") ?? "";
 		_flyout = new FlyoutWindow();
 		_window = new MainWindow(_store);
@@ -35,6 +44,26 @@ sealed class Shell
 		_flyout.ToggleRequested += () => SetEnabled(!_enabled);
 		_flyout.OpenRequested += ShowWindow;
 		_flyout.ExitRequested += Exit;
+		_flyout.ConnectRequested += url => _ = Connect(url);
+		_window.ConnectRequested += url => _ = Connect(url);
+		_flyout.EndpointEdited += url => SyncEndpoint(url, true);
+		_window.EndpointEdited += url => SyncEndpoint(url, false);
+		_judge.Noted += OnNoted;
+		_judge.Judged += src =>
+		{
+			var verdict = _store.CopyVerdict(src);
+			if (verdict != null) _enforcer.OnVerdict(verdict, true);
+		};
+		_posture.Alerted += Balloon;
+		_remote.Alerted += Balloon;
+		_window.EnforceRequested += on => _enforcer.SetEnabled(on);
+		_window.ReleaseRequested += src => _enforcer.Release(src);
+		_window.AllowChanged += (id, on) => _remote.SetAllowed(id, on);
+		_window.AllowNoneRequested += () => _remote.AllowNone();
+		_window.StopUnlistedRequested += on => _remote.SetStopEnabled(on);
+		_enforcer.Start();
+		_remote.Start();
+		ShowEndpoints();
 		SetEnabled(true);
 	}
 
@@ -43,9 +72,19 @@ sealed class Shell
 		System.Windows.Application.Current.Exit += (_, _) =>
 		{
 			_watch.Stop();
+			_posture.Stop();
+			_remote.Stop();
+			_enforcer.Shutdown();
 			_icon.Visible = false;
 			_icon.Dispose();
 		};
+		System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+		{
+			_icon.BalloonTipTitle = "GUARDEX";
+			_icon.BalloonTipText = "GUARDEX is running";
+			_icon.BalloonTipIcon = ToolTipIcon.Info;
+			_icon.ShowBalloonTip(3000);
+		}));
 	}
 
 	void ToggleFlyout()
@@ -56,6 +95,7 @@ sealed class Shell
 			return;
 		}
 		_flyout.SetEnabled(_enabled, _store.Copy());
+		_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
 		var area = System.Windows.SystemParameters.WorkArea;
 		var cursor = Cursor.Position;
 		_flyout.Left = Math.Clamp(cursor.X - _flyout.Width + 24, area.Left + 8, area.Right - _flyout.Width - 8);
@@ -72,7 +112,59 @@ sealed class Shell
 		if (_window.WindowState == System.Windows.WindowState.Minimized)
 			_window.WindowState = System.Windows.WindowState.Normal;
 		_window.Activate();
+		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
 		_window.RefreshNow();
+	}
+
+	void ShowEndpoints()
+	{
+		_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+	}
+
+	void SyncEndpoint(string url, bool fromFlyout)
+	{
+		_judge.SetEndpoint(url);
+		if (fromFlyout)
+			_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+		else
+			_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+	}
+
+	async Task Connect(string url)
+	{
+		_flyout.SetBusy(true);
+		_window.SetBusy(true);
+		try
+		{
+			await _judge.ConnectAsync(url);
+		}
+		finally
+		{
+			var app = System.Windows.Application.Current;
+			app?.Dispatcher.Invoke(() =>
+			{
+				_flyout.SetBusy(false);
+				_window.SetBusy(false);
+				ShowEndpoints();
+			});
+		}
+	}
+
+	void OnNoted(ModelNote note)
+	{
+		var app = System.Windows.Application.Current;
+		if (app == null) return;
+		app.Dispatcher.Invoke(() =>
+		{
+			ShowEndpoints();
+			if (!note.Alert || note.Text.Length == 0) return;
+			MessageBeep(0x30);
+			_icon.BalloonTipTitle = "GUARDEX";
+			_icon.BalloonTipText = note.Text;
+			_icon.BalloonTipIcon = ToolTipIcon.Warning;
+			_icon.ShowBalloonTip(4000);
+		});
 	}
 
 	void SetEnabled(bool on)
@@ -82,10 +174,12 @@ sealed class Shell
 		{
 			_store.SetModel(_judge.ModelName + " at " + _judge.BaseUrl);
 			_watch.Start();
+			_posture.Start();
 		}
 		else
 		{
 			_watch.Stop();
+			_posture.Stop();
 		}
 		_icon.Icon = TrayArt.Make(on);
 		_icon.Text = on ? "GUARDEX is on" : "GUARDEX is off";
@@ -95,9 +189,27 @@ sealed class Shell
 	void Exit()
 	{
 		_flyout.Hide();
+		_posture.Stop();
+		_remote.Stop();
+		_enforcer.Shutdown();
 		_window.AllowClose();
 		_window.Close();
 		System.Windows.Application.Current.Shutdown();
+	}
+
+	void Balloon(string text)
+	{
+		if (text.Length == 0) return;
+		var app = System.Windows.Application.Current;
+		if (app == null) return;
+		app.Dispatcher.BeginInvoke(new Action(() =>
+		{
+			MessageBeep(0x30);
+			_icon.BalloonTipTitle = "GUARDEX";
+			_icon.BalloonTipText = text.Length <= 220 ? text : text[..220];
+			_icon.BalloonTipIcon = ToolTipIcon.Warning;
+			_icon.ShowBalloonTip(6000);
+		}));
 	}
 }
 

@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Guardex;
@@ -7,13 +9,36 @@ public partial class MainWindow : Window
 {
 	readonly SessionStore _store;
 	readonly DispatcherTimer _timer;
+	readonly SolidColorBrush _green = Freeze(143, 181, 115);
+	readonly SolidColorBrush _muted = Freeze(142, 160, 136);
+	readonly SolidColorBrush _amber = Freeze(214, 177, 90);
+	readonly SolidColorBrush _navOn = Freeze(49, 66, 50);
+	readonly SolidColorBrush _navOff = Freeze(27, 33, 25);
 	bool _allowClose;
+	bool _blocking;
+	string _page = "traffic";
 	string _selected = "";
+	string _block = "";
+	string _finding = "";
+	string _srcSig = "";
+	string _blockSig = "";
+	string _findSig = "";
+	string _remoteSig = "";
+	int _gen = -1;
+
+	public event Action<string>? ConnectRequested;
+	public event Action<string>? EndpointEdited;
+	public event Action<bool>? EnforceRequested;
+	public event Action<string>? ReleaseRequested;
+	public event Action<string, bool>? AllowChanged;
+	public event Action? AllowNoneRequested;
+	public event Action<bool>? StopUnlistedRequested;
 
 	public MainWindow(SessionStore store)
 	{
 		_store = store;
 		InitializeComponent();
+		Show("traffic");
 		_timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
 		_timer.Tick += (_, _) => RefreshNow();
 		_timer.Start();
@@ -21,38 +46,199 @@ public partial class MainWindow : Window
 
 	public void AllowClose() => _allowClose = true;
 
+	public void ShowEndpoint(string url, bool ready)
+	{
+		if (!Endpoint.IsKeyboardFocusWithin)
+			Endpoint.Text = url;
+		ReadyMark.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
+	}
+
+	public void SetBusy(bool busy)
+	{
+		ConnectButton.IsEnabled = !busy;
+		ConnectButton.Content = busy ? "Connecting" : "Connect";
+	}
+
 	public void RefreshNow()
 	{
+		var gen = _store.Generation;
+		if (gen == _gen && _gen >= 0) return;
+		_gen = gen;
 		var dash = _store.Copy();
-		Summary.Text = dash.Summary;
-		var listen = dash.ListenCount == 0 ? "none" : dash.ListenCount + "  " + dash.ListenText;
-		Status.Text = "tcp " + dash.Tcp + "    http.sys " + dash.Http + "    model " + dash.Model + "    listening " + listen;
-		Feed.Text = dash.Feed.Count == 0 ? "Waiting for traffic." : string.Join(Environment.NewLine, dash.Feed);
-
-		var keep = _selected;
-		Sources.ItemsSource = dash.Sources;
-		if (keep.Length > 0)
+		PaintChip(TcpChip, "TCP", dash.Tcp);
+		PaintChip(HttpChip, "HTTP", dash.Http);
+		PaintChip(ModelChip, "Model", dash.Model);
+		ListenChip.Text = dash.ListenCount == 0 ? "Listening  none" : "Listening  " + dash.ListenCount;
+		ListenChip.Foreground = dash.ListenCount == 0 ? _muted : _green;
+		PortsLine.Text = dash.ListenCount == 0 ? "No listening ports." : "Listening  " + dash.ListenText;
+		_blocking = dash.Enforce == "blocking";
+		EnforceState.Text = dash.Enforce switch
 		{
-			foreach (SourceRow row in Sources.Items)
-			{
-				if (row.Src == keep)
-				{
-					Sources.SelectedItem = row;
-					break;
-				}
-			}
-		}
+			"blocking" => "Blocking",
+			"needs admin" => "Needs admin",
+			_ => "Reporting"
+		};
+		EnforceState.Foreground = _blocking ? _green : dash.Enforce == "needs admin" ? _amber : _muted;
+		RemoteBanner.Visibility = dash.RemoteAlert.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+		RemoteBannerText.Text = dash.RemoteAlert;
+		NavBlocks.Content = dash.BlockCount == 0 ? "Blocks" : "Blocks  " + dash.BlockCount;
+		NavHost.Content = dash.FindingCount == 0 ? "Host" : "Host  " + dash.FindingCount;
+		NavRemote.Content = dash.RemoteHits == 0 ? "Remote" : "Remote  " + dash.RemoteHits;
+		PaintNav();
+		PostureStatus.Text = dash.Posture;
+		RemoteHead.Text = !dash.StopUnlisted
+			? "Stopping is off. Unchecked tools are reported and left running."
+			: dash.Remote.Count(r => r.Allowed) == 0
+				? "None allowed. A tool on this list is stopped until you check it."
+				: dash.Remote.Count(r => r.Allowed) + " allowed. Anything unchecked is stopped.";
+		RemoteStatus.Text = dash.RemoteStatus;
+		if (!StopUnlisted.IsKeyboardFocusWithin && StopUnlisted.IsChecked != dash.StopUnlisted)
+			StopUnlisted.IsChecked = dash.StopUnlisted;
+
+		var srcSig = string.Join("\n", dash.Sources.Select(r => r.Src + "|" + r.Score + "|" + r.Band + "|" + r.Cycle + "|" + r.Detail));
+		Bind(Sources, dash.Sources, ref _srcSig, srcSig, _selected);
 		if (Sources.SelectedItem is SourceRow selected)
 			Detail.Text = selected.Detail;
 		else if (dash.Sources.Count == 0)
 			Detail.Text = "No inbound clients yet.";
+		Feed.Text = dash.Feed.Count == 0 ? "Waiting for traffic." : string.Join(Environment.NewLine, dash.Feed);
+
+		var blockSig = string.Join("\n", dash.Blocks.Select(r => r.Src + "|" + r.State + "|" + r.Until + "|" + r.Scenario + "|" + r.Note));
+		Bind(Blocks, dash.Blocks, ref _blockSig, blockSig, _block);
+		if (Blocks.SelectedItem is BlockRow block)
+			ShowBlock(block);
+		else if (dash.Blocks.Count == 0)
+			BlockDetail.Text = "No source is blocked.";
+
+		var findSig = string.Join("\n", dash.Findings.Select(r => r.Id + "|" + r.Severity + "|" + r.Why + "|" + r.Judge));
+		Bind(Findings, dash.Findings, ref _findSig, findSig, _finding);
+		if (Findings.SelectedItem is Finding finding)
+			ShowFinding(finding);
+		else if (dash.Findings.Count == 0)
+			HostDetail.Text = "Nothing in the startup folders, run keys, services, tasks, or the other start locations looks planted.";
+
+		var remoteSig = string.Join("\n", dash.Remote.Select(r => r.Id + "|" + r.Allowed + "|" + r.State + "|" + r.Line));
+		if (_remoteSig != remoteSig)
+		{
+			_remoteSig = remoteSig;
+			RemoteList.ItemsSource = dash.Remote;
+		}
 	}
 
-	void OnSelect(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+	static void Bind(System.Windows.Controls.ListBox box, System.Collections.IEnumerable items, ref string sig, string next, string keep)
+	{
+		if (sig == next) return;
+		sig = next;
+		box.ItemsSource = items;
+		if (keep.Length == 0) return;
+		foreach (var item in box.Items)
+		{
+			var id = item switch
+			{
+				SourceRow row => row.Src,
+				BlockRow block => block.Src,
+				Finding finding => finding.Id,
+				_ => ""
+			};
+			if (id == keep)
+			{
+				box.SelectedItem = item;
+				return;
+			}
+		}
+	}
+
+	void PaintChip(TextBlock chip, string name, string status)
+	{
+		chip.Text = name + "  " + status;
+		var lower = status.ToLowerInvariant();
+		chip.Foreground = lower.StartsWith("on") || lower.Contains("ready") ? _green
+			: lower.Contains("error") || lower.Contains("needs") || lower.Contains("unreachable") || lower.Contains("404") || lower.Contains("timeout") ? _amber
+			: _muted;
+	}
+
+	void PaintNav()
+	{
+		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote })
+		{
+			var on = button == NavTraffic && _page == "traffic"
+				|| button == NavBlocks && _page == "blocks"
+				|| button == NavHost && _page == "host"
+				|| button == NavRemote && _page == "remote";
+			button.Background = on ? _navOn : _navOff;
+		}
+	}
+
+	void Show(string page)
+	{
+		_page = page;
+		TrafficPage.Visibility = page == "traffic" ? Visibility.Visible : Visibility.Collapsed;
+		BlocksPage.Visibility = page == "blocks" ? Visibility.Visible : Visibility.Collapsed;
+		HostPage.Visibility = page == "host" ? Visibility.Visible : Visibility.Collapsed;
+		RemotePage.Visibility = page == "remote" ? Visibility.Visible : Visibility.Collapsed;
+		PaintNav();
+	}
+
+	void ShowBlock(BlockRow row)
+	{
+		BlockDetail.Text = row.State + "  until " + row.Until + "\n" + row.Origin + "  " + row.Scenario + "\n" + row.Why + "\n" + row.Note;
+	}
+
+	void OnSelect(object sender, SelectionChangedEventArgs e)
 	{
 		if (Sources.SelectedItem is not SourceRow row) return;
 		_selected = row.Src;
 		Detail.Text = row.Detail;
+	}
+
+	void OnBlockSelect(object sender, SelectionChangedEventArgs e)
+	{
+		if (Blocks.SelectedItem is not BlockRow row) return;
+		_block = row.Src;
+		ShowBlock(row);
+	}
+
+	void OnFindingSelect(object sender, SelectionChangedEventArgs e)
+	{
+		if (Findings.SelectedItem is not Finding row) return;
+		_finding = row.Id;
+		ShowFinding(row);
+	}
+
+	void ShowFinding(Finding row)
+	{
+		var judge = row.Judge.Length == 0 ? "" : "\nModel " + row.Judge + ". " + row.Reason;
+		HostDetail.Text = row.Severity + "  " + row.Kind + "\n" + row.Name + "\n" + row.Location + "\n" + row.Detail + "\n" + row.Why + judge;
+	}
+
+	void OnConnect(object sender, RoutedEventArgs e) => ConnectRequested?.Invoke(Endpoint.Text);
+
+	void OnEndpointLostFocus(object sender, RoutedEventArgs e) => EndpointEdited?.Invoke(Endpoint.Text);
+
+	void OnEnforce(object sender, RoutedEventArgs e) => EnforceRequested?.Invoke(!_blocking);
+
+	void OnRelease(object sender, RoutedEventArgs e)
+	{
+		if (Blocks.SelectedItem is BlockRow row)
+			ReleaseRequested?.Invoke(row.Src);
+	}
+
+	void OnAllowClick(object sender, RoutedEventArgs e)
+	{
+		if (sender is not System.Windows.Controls.CheckBox box || box.DataContext is not RemoteRow row) return;
+		AllowChanged?.Invoke(row.Id, box.IsChecked == true);
+	}
+
+	void OnAllowNone(object sender, RoutedEventArgs e) => AllowNoneRequested?.Invoke();
+
+	void OnStopToggle(object sender, RoutedEventArgs e) => StopUnlistedRequested?.Invoke(StopUnlisted.IsChecked == true);
+
+	void OnNav(object sender, RoutedEventArgs e)
+	{
+		if (sender == NavBlocks) Show("blocks");
+		else if (sender == NavHost) Show("host");
+		else if (sender == NavRemote) Show("remote");
+		else Show("traffic");
 	}
 
 	void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -60,5 +246,12 @@ public partial class MainWindow : Window
 		if (_allowClose) return;
 		e.Cancel = true;
 		Hide();
+	}
+
+	static SolidColorBrush Freeze(byte r, byte g, byte b)
+	{
+		var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+		brush.Freeze();
+		return brush;
 	}
 }
