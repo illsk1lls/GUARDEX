@@ -10,6 +10,13 @@
         AllowsTransparency="True"
         Background="Transparent"
         ShowActivated="True">
+  <Window.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Window.Resources>
   <Border Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="10" Padding="16">
     <Border.Effect>
       <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.45" Color="#000000"/>
@@ -54,8 +61,17 @@
                 Background="#273222" Foreground="#E4ECDF" BorderBrush="#2C3828" Padding="12,4" Cursor="Hand"/>
       </StackPanel>
 
-      <TextBlock x:Name="Hint" Grid.Row="3" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#8EA088" FontSize="12"
-                 Text="Watching inbound connections."/>
+      <StackPanel Grid.Row="3" Margin="0,12,0,0">
+        <StackPanel x:Name="AskRow" Visibility="Collapsed" Margin="0,0,0,8">
+          <TextBlock x:Name="AskText" TextWrapping="Wrap" Foreground="#E4ECDF" FontSize="12"/>
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Content="Yes" Click="OnAskYes" Margin="0,0,8,0" Padding="12,4"/>
+            <Button Content="No" Click="OnAskNo" Padding="12,4"/>
+          </StackPanel>
+        </StackPanel>
+        <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#8EA088" FontSize="12"
+                   Text="Watching inbound connections."/>
+      </StackPanel>
 
       <DockPanel Grid.Row="4" Margin="0,14,0,0">
         <Button x:Name="ExitButton" Content="Exit" DockPanel.Dock="Right" Click="OnExit"

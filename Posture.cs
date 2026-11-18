@@ -262,6 +262,8 @@ sealed class PostureWatch
 				finding.Severity = "block";
 		}
 		_store.SetFindings(sweep.Findings, sweep.Status);
+		foreach (var finding in sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0 && !prior.ContainsKey(f.Id)).Take(3))
+			_judge.Notice("host", finding.Id, finding.Name + " showed up in startup. " + finding.Why);
 		var batch = sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0).Take(6).ToList();
 		if (batch.Count > 0 && _judge.Ready)
 			_ = Task.Run(() => _judge.ReviewHostAsync(batch, ct));

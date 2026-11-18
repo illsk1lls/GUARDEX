@@ -10,6 +10,7 @@ public partial class FlyoutWindow : Window
 	public event Action? ExitRequested;
 	public event Action<string>? ConnectRequested;
 	public event Action<string>? EndpointEdited;
+	public event Action<bool>? AskAnswered;
 
 	public FlyoutWindow()
 	{
@@ -26,9 +27,11 @@ public partial class FlyoutWindow : Window
 		StateLine.Foreground = new Media.SolidColorBrush(on ? Media.Color.FromRgb(143, 181, 115) : Media.Color.FromRgb(142, 160, 136));
 		Track.Background = new Media.SolidColorBrush(on ? Media.Color.FromRgb(63, 107, 69) : Media.Color.FromRgb(58, 64, 54));
 		Knob.HorizontalAlignment = on ? System.Windows.HorizontalAlignment.Right : System.Windows.HorizontalAlignment.Left;
-		if (dash.RemoteAlert.Length > 0)
+		AskRow.Visibility = dash.Ask.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+		AskText.Text = dash.Ask;
+		if (dash.Banner.Length > 0)
 		{
-			Hint.Text = dash.RemoteAlert;
+			Hint.Text = dash.Banner;
 			Hint.Foreground = new Media.SolidColorBrush(Media.Color.FromRgb(240, 180, 180));
 			return;
 		}
@@ -64,6 +67,10 @@ public partial class FlyoutWindow : Window
 	void OnOpen(object sender, RoutedEventArgs e) => OpenRequested?.Invoke();
 
 	void OnExit(object sender, RoutedEventArgs e) => ExitRequested?.Invoke();
+
+	void OnAskYes(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(true);
+
+	void OnAskNo(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(false);
 
 	void OnConnect(object sender, RoutedEventArgs e) => ConnectRequested?.Invoke(Endpoint.Text);
 

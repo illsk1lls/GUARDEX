@@ -14,6 +14,12 @@ public sealed class SessionStore
 	string _enforce = "reporting";
 	string _posture = "not checked yet";
 	string _remoteAlert = "";
+	string _launchAlert = "";
+	string _flowAlert = "";
+	string _clipAlert = "";
+	string _ask = "";
+	string _askAbout = "";
+	string _askId = "";
 	string _remoteStatus = "";
 	bool _stopUnlisted = true;
 	int _generation;
@@ -183,6 +189,11 @@ public sealed class SessionStore
 				Enforce = _enforce,
 				Posture = _posture,
 				RemoteAlert = _remoteAlert,
+				GuardAlert = Join(Join(_launchAlert, _flowAlert), _clipAlert),
+				Ask = _ask,
+				AskAbout = _askAbout,
+				AskId = _askId,
+				Banner = Join(Join(Join(_launchAlert, _flowAlert), _clipAlert), _remoteAlert),
 				RemoteStatus = _remoteStatus,
 				StopUnlisted = _stopUnlisted,
 				Blocks = _blocks.ToList(),
@@ -305,6 +316,50 @@ public sealed class SessionStore
 		}
 	}
 
+	public void SetLaunchAlert(string text) => Hold(ref _launchAlert, text);
+
+	public void SetFlowAlert(string text) => Hold(ref _flowAlert, text);
+
+	public void SetClipAlert(string text) => Hold(ref _clipAlert, text);
+
+	public void SetAsk(string text, string about, string id)
+	{
+		lock (_gate)
+		{
+			if (_ask == text && _askAbout == about && _askId == id) return;
+			_ask = text;
+			_askAbout = about;
+			_askId = id;
+			_generation++;
+		}
+	}
+
+	internal (int Score, string Band, bool Hard)? Client(string src)
+	{
+		lock (_gate)
+		{
+			if (!_verdicts.TryGetValue(src, out var verdict)) return null;
+			return (verdict.Score, verdict.Band, verdict.Hard);
+		}
+	}
+
+	void Hold(ref string slot, string text)
+	{
+		lock (_gate)
+		{
+			if (slot == text) return;
+			slot = text;
+			_generation++;
+		}
+	}
+
+	static string Join(string left, string right)
+	{
+		if (left.Length == 0) return right;
+		if (right.Length == 0) return left;
+		return left + " " + right;
+	}
+
 	public void SetRemoteStatus(string text)
 	{
 		lock (_gate)
@@ -387,6 +442,11 @@ public sealed class Dash
 	public string Enforce { get; init; } = "reporting";
 	public string Posture { get; init; } = "";
 	public string RemoteAlert { get; init; } = "";
+	public string GuardAlert { get; init; } = "";
+	public string Banner { get; init; } = "";
+	public string Ask { get; init; } = "";
+	public string AskAbout { get; init; } = "";
+	public string AskId { get; init; } = "";
 	public string RemoteStatus { get; init; } = "";
 	public bool StopUnlisted { get; init; } = true;
 	public List<BlockRow> Blocks { get; init; } = [];

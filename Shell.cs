@@ -13,6 +13,8 @@ sealed class Shell
 	readonly HostWatch _watch;
 	readonly PostureWatch _posture;
 	readonly RemoteGuard _remote;
+	readonly LaunchGuard _launch;
+	readonly ClipGuard _clip;
 	readonly NotifyIcon _icon;
 	readonly FlyoutWindow _flyout;
 	readonly MainWindow _window;
@@ -24,10 +26,13 @@ sealed class Shell
 	public Shell()
 	{
 		_judge = new LocalJudge(_store);
+		_judge.AskAuth = AskSignIn;
 		_enforcer = new Enforcer(_store);
 		_watch = new HostWatch(_store, _judge, _enforcer);
 		_posture = new PostureWatch(_store, _judge);
 		_remote = new RemoteGuard(_store);
+		_launch = new LaunchGuard(_store, _judge);
+		_clip = new ClipGuard(_store);
 		_store.Canary = Environment.GetEnvironmentVariable("GUARDEX_CANARY") ?? "";
 		_flyout = new FlyoutWindow();
 		_window = new MainWindow(_store);
@@ -56,13 +61,19 @@ sealed class Shell
 		};
 		_posture.Alerted += Balloon;
 		_remote.Alerted += Balloon;
+		_launch.Alerted += Balloon;
+		_clip.Alerted += Balloon;
 		_window.EnforceRequested += on => _enforcer.SetEnabled(on);
 		_window.ReleaseRequested += src => _enforcer.Release(src);
 		_window.AllowChanged += (id, on) => _remote.SetAllowed(id, on);
 		_window.AllowNoneRequested += () => _remote.AllowNone();
 		_window.StopUnlistedRequested += on => _remote.SetStopEnabled(on);
+		_window.AskAnswered += yes => _judge.Answer(yes);
+		_flyout.AskAnswered += yes => _judge.Answer(yes);
 		_enforcer.Start();
 		_remote.Start();
+		_launch.Start();
+		_clip.Hook();
 		ShowEndpoints();
 		SetEnabled(true);
 	}
@@ -74,6 +85,8 @@ sealed class Shell
 			_watch.Stop();
 			_posture.Stop();
 			_remote.Stop();
+			_launch.Stop();
+			_clip.Stop();
 			_enforcer.Shutdown();
 			_icon.Visible = false;
 			_icon.Dispose();
@@ -112,23 +125,39 @@ sealed class Shell
 		if (_window.WindowState == System.Windows.WindowState.Minimized)
 			_window.WindowState = System.Windows.WindowState.Normal;
 		_window.Activate();
-		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready, _judge.ModelName, _judge.Status);
 		_window.RefreshNow();
 	}
 
 	void ShowEndpoints()
 	{
 		_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
-		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+		_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready, _judge.ModelName, _judge.Status);
 	}
 
 	void SyncEndpoint(string url, bool fromFlyout)
 	{
 		_judge.SetEndpoint(url);
 		if (fromFlyout)
-			_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+			_window.ShowEndpoint(_judge.BaseUrl, _judge.Ready, _judge.ModelName, _judge.Status);
 		else
 			_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
+	}
+
+	SignIn? AskSignIn(string endpoint)
+	{
+		SignIn? creds = null;
+		void Show()
+		{
+			var dlg = new AuthWindow(endpoint);
+			if (_window.IsVisible) dlg.Owner = _window;
+			if (dlg.ShowDialog() == true) creds = dlg.Creds;
+		}
+		var app = System.Windows.Application.Current;
+		if (app == null) return null;
+		if (app.Dispatcher.CheckAccess()) Show();
+		else app.Dispatcher.Invoke(Show);
+		return creds;
 	}
 
 	async Task Connect(string url)
@@ -191,6 +220,8 @@ sealed class Shell
 		_flyout.Hide();
 		_posture.Stop();
 		_remote.Stop();
+		_launch.Stop();
+		_clip.Stop();
 		_enforcer.Shutdown();
 		_window.AllowClose();
 		_window.Close();

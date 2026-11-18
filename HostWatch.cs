@@ -95,6 +95,7 @@ sealed class HostWatch
 	{
 		if (verdict == null) return;
 		_enforcer.OnVerdict(verdict, false);
+		_judge.Notice("client", verdict.Src, verdict.Src + " just reached this PC.");
 		var ask = verdict.Gray || (verdict.Band == "block" && !verdict.Hard);
 		if (!ask) return;
 		var src = verdict.Src;
