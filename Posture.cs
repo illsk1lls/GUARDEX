@@ -197,7 +197,22 @@ static class PostureRules
 			var planted = Decide("Service", "ScreenConnect", @"C:\Program Files\ScreenConnect\ScreenConnect.ClientService.exe");
 			if (planted?.Severity != "block") failures.Add("screenconnect service");
 		}
+		var kept = KeepSeen(["Run|HKCU\\a|One", "Run|HKCU\\a|Two"], ["Run|HKCU\\a|Two", "Run|HKCU\\a|Three"], true);
+		if (kept.Count != 1 || kept[0] != "Run|HKCU\\a|Two") failures.Add("new run key entered the baseline");
+		var seeded = KeepSeen([], ["Run|HKCU\\a|One"], false);
+		if (seeded.Count != 1 || seeded[0] != "Run|HKCU\\a|One") failures.Add("first sweep did not seed");
+		if (KeepSeen(seeded, ["Run|HKCU\\a|One", "Run|HKCU\\a|New"], true).Contains("Run|HKCU\\a|New"))
+			failures.Add("second sweep absorbed the new key");
+		if (KeepSeen(seeded, [], true).Count != 0) failures.Add("removed key stayed in the baseline");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
+	}
+
+	public static List<string> KeepSeen(IEnumerable<string> previous, IEnumerable<string> now, bool seeded)
+	{
+		if (!seeded)
+			return now.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+		var live = new HashSet<string>(now, StringComparer.OrdinalIgnoreCase);
+		return previous.Where(id => live.Contains(id)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
 	}
 }
 
@@ -320,12 +335,12 @@ sealed class PostureWatch
 				IsNew = isNew
 			});
 		}
-		if (saveBaseline)
+		if (saveBaseline && errors.Count == 0)
 		{
 			try
 			{
 				Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-				File.WriteAllLines(path, now.OrderBy(s => s));
+				File.WriteAllLines(path, PostureRules.KeepSeen(previous, now, existed));
 			}
 			catch (Exception ex) { errors.Add("baseline: " + ex.Message); }
 		}

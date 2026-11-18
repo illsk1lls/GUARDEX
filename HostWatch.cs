@@ -64,7 +64,8 @@ sealed class HostWatch
 				var now = new HashSet<string>(StringComparer.Ordinal);
 				foreach (var row in rows)
 				{
-					if (row.State is not (4 or 5 or 8 or 11)) continue;
+					// 5 established, 8 close-wait, 11 time-wait. State 4 is SYN received and can be spoofed.
+					if (row.State is not (5 or 8 or 11)) continue;
 					if (!listen.Contains(row.LocalPort)) continue;
 					if (Skip(row.Remote)) continue;
 					var key = row.Remote + "|" + row.RemotePort + "|" + row.LocalPort;
@@ -163,6 +164,7 @@ sealed class HostWatch
 			Method = string.IsNullOrWhiteSpace(method) ? "GET" : method,
 			Status = status,
 			UserAgent = ua ?? "",
+			// HTTP.sys gives the user-agent string, not the header set. Scorer ignores a lone user-agent name.
 			Headers = string.IsNullOrWhiteSpace(ua) ? [] : ["user-agent"]
 		});
 		NoteVerdict(verdict, ct);

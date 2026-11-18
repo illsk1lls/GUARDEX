@@ -20,6 +20,7 @@ public static class Timing
 
 	public const string Summary =
 		"Watching the last 60 minutes on this machine. " +
-		"A home-PC model often goes quiet for 8 seconds up to 15 minutes between tries. " +
-		"A pause of 2.5 seconds still counts. Faster than that is scored as the tool rate: about 2, 5, or 20 requests a second.";
+		"HTTP pacing and the pause between tries are scored for scripted clients. " +
+		"A browser user-agent is left out of that. " +
+		"A sweep is six or more listening ports within two minutes.";
 }

@@ -7,7 +7,6 @@ static class Scorer
 		var items = events.OrderBy(e => e.Utc).ToList();
 		var signals = new List<Signal>();
 		var http = items.Where(e => e.Kind == ObsKind.Http).ToList();
-		var timeline = http.Count > 0 ? http : items;
 
 		var families = new HashSet<string>();
 		var paths = new HashSet<string>(StringComparer.Ordinal);
@@ -66,19 +65,32 @@ static class Scorer
 		if (families.Count >= 2)
 			signals.Add(Soft("mixed_clients", 25, "families " + string.Join(", ", families.OrderBy(f => f))));
 
-		var (pace, paceDetail) = ToolPace(timeline);
-		if (pace.Length > 0)
-			signals.Add(Soft("paced", 15, paceDetail));
+		// A browser refreshing a page leaves the same gaps as a slow model.
+		// Those timing signals stay on scripted clients. A spoofed browser
+		// user-agent still loses to a hard signal.
+		var browserOnly = families.Count == 1 && families.Contains("browser");
+		var pace = "";
+		var paceDetail = "";
+		var cycle = "";
+		double thinkMedian = 0;
+		var thinkGaps = 0;
+		if (http.Count > 0 && !browserOnly)
+		{
+			(pace, paceDetail) = ToolPace(http);
+			if (pace.Length > 0)
+				signals.Add(Soft("paced", 15, paceDetail));
 
-		var (cycle, thinkMedian, thinkGaps, cycleDetail) = ThinkCycles(timeline);
-		if (cycle == "slow")
-			signals.Add(Soft("slow_cycle", 35, cycleDetail));
-		else if (cycle == "fast")
-			signals.Add(Soft("fast_cycle", 30, cycleDetail));
+			string cycleDetail;
+			(cycle, thinkMedian, thinkGaps, cycleDetail) = ThinkCycles(http);
+			if (cycle == "slow")
+				signals.Add(Soft("slow_cycle", 35, cycleDetail));
+			else if (cycle == "fast")
+				signals.Add(Soft("fast_cycle", 30, cycleDetail));
 
-		var phases = Phases(timeline);
-		if (phases.Distinct >= 2 && phases.Solid >= 2)
-			signals.Add(Soft("episodic", 25, "bursts " + string.Join(" -> ", phases.Names)));
+			var phases = Phases(http);
+			if (phases.Distinct >= 2 && phases.Solid >= 2)
+				signals.Add(Soft("episodic", 25, "bursts " + string.Join(" -> ", phases.Names)));
+		}
 
 		if (http.Count >= 12 && paths.Count > 0)
 		{
@@ -92,10 +104,15 @@ static class Scorer
 		if (maxQ >= 8)
 			signals.Add(Soft("depth", 15, $"{maxQ} distinct queries on one path"));
 
-		if (http.Count >= 10 && headerCounts.Count > 0)
+		if (http.Count >= 10)
 		{
-			var top = headerCounts.Max(kv => kv.Value);
-			if (top / (double)http.Count >= 0.80 && browser == 0)
+			var top = 0;
+			foreach (var kv in headerCounts)
+			{
+				if (!InformativeHeaders(kv.Key)) continue;
+				if (kv.Value > top) top = kv.Value;
+			}
+			if (top > 0 && top / (double)http.Count >= 0.80 && browser == 0)
 				signals.Add(Soft("frozen_headers", 15, "one header set on most requests, no browser fetch metadata"));
 		}
 		if (http.Count >= 8 && cookieBare >= 6 && paths.Count >= 6)
@@ -103,11 +120,16 @@ static class Scorer
 		if (http.Count >= 5 && browser / (double)http.Count >= 0.70)
 			signals.Add(Soft("browser_hints", -25, "sec-fetch-site on most requests"));
 
-		if (ports.Count >= 6)
-			signals.Add(Soft("port_sweep", 50, $"{ports.Count} local ports touched"));
+		var swept = PortSweep(items);
+		if (swept >= 6)
+			signals.Add(Soft("port_sweep", 50, swept + " local ports in under two minutes"));
 
-		if (http.Count == 0 && items.Count >= 12 && ports.Count == 1)
-			signals.Add(Soft("repeat_connect", 30, $"{items.Count} connections to :{ports.First()}, no request detail yet"));
+		if (http.Count == 0 && ports.Count == 1)
+		{
+			var burst = PeakCount(items, 60);
+			if (burst >= 12)
+				signals.Add(Soft("repeat_connect", 30, burst + " connections to :" + ports.First() + " in one minute, no request detail yet"));
+		}
 
 		var score = signals.Where(s => !s.Hard).Sum(s => s.Weight);
 		if (score < 0) score = 0;
@@ -321,6 +343,57 @@ static class Scorer
 	static string HeaderKey(string[] headers) =>
 		string.Join(",", headers.Select(h => h.Trim().ToLowerInvariant()).Where(h => h.Length > 0).Distinct().OrderBy(h => h));
 
+	// The live HTTP sensor stores the user-agent name and nothing else.
+	// That single name is not a frozen client and cannot prove a browser.
+	static bool InformativeHeaders(string key)
+	{
+		if (key.Length == 0) return false;
+		var comma = key.IndexOf(',');
+		if (comma > 0 && comma < key.Length - 1) return true;
+		return !key.Equals("user-agent", StringComparison.Ordinal);
+	}
+
+	// Six or more listening ports inside two minutes, and no single port
+	// holding the conversation. A PC using SMB all afternoon is not a sweep.
+	static int PortSweep(List<Observation> items)
+	{
+		var best = 0;
+		for (var i = 0; i < items.Count; i++)
+		{
+			var counts = new Dictionary<int, int>();
+			for (var j = i; j < items.Count; j++)
+			{
+				if ((items[j].Utc - items[i].Utc).TotalSeconds > 120) break;
+				var port = items[j].LocalPort;
+				if (port <= 0) continue;
+				counts.TryGetValue(port, out var n);
+				counts[port] = n + 1;
+			}
+			if (counts.Count < 6) continue;
+			var busiest = 0;
+			foreach (var n in counts.Values)
+				if (n > busiest) busiest = n;
+			if (busiest <= 3 && counts.Count > best) best = counts.Count;
+		}
+		return best;
+	}
+
+	static int PeakCount(List<Observation> items, double windowSec)
+	{
+		var max = 0;
+		for (var i = 0; i < items.Count; i++)
+		{
+			var count = 0;
+			for (var j = i; j < items.Count; j++)
+			{
+				if ((items[j].Utc - items[i].Utc).TotalSeconds > windowSec) break;
+				count++;
+			}
+			if (count > max) max = count;
+		}
+		return max;
+	}
+
 	static Signal Soft(string name, int weight, string detail) =>
 		new() { Name = name, Weight = weight, Detail = detail, Hard = false };
 
@@ -369,11 +442,77 @@ static class Scorer
 
 		var scan = new List<Observation> { Http(t0, "/", ua: "sqlmap/1.8") };
 		if (Score("x", scan, "").Band != "block") failures.Add("scanner ua was not a block");
+		if (!qv.Signals.Any(s => s.Name == "frozen_headers")) failures.Add("two header names did not freeze");
+
+		var phone = new List<Observation>();
+		for (var load = 0; load < 5; load++)
+		{
+			var start = t0.AddMinutes(load * 4);
+			for (var c = 0; c < 6; c++)
+				phone.Add(Tcp(start.AddMilliseconds(c * 500), 8080));
+		}
+		var phoneScore = Score("phone", phone, "");
+		if (phoneScore.Band != "allow" || phoneScore.Action == "block")
+			failures.Add("phone page loads scored " + phoneScore.Score + " " + phoneScore.Band);
+		if (phoneScore.Signals.Any(s => s.Name is "slow_cycle" or "paced" or "port_sweep" or "repeat_connect"))
+			failures.Add("phone page loads looked scripted");
+
+		var lan = new List<Observation>();
+		int[] lanPorts = [135, 139, 445, 5040, 5357, 7680];
+		for (var i = 0; i < lanPorts.Length; i++)
+		{
+			lan.Add(Tcp(t0.AddMinutes(i * 5), lanPorts[i]));
+			lan.Add(Tcp(t0.AddMinutes(i * 5).AddSeconds(1), lanPorts[i]));
+		}
+		var lanScore = Score("lan", lan, "");
+		if (lanScore.Action == "block" || lanScore.Signals.Any(s => s.Name == "port_sweep"))
+			failures.Add("lan services over 30 min scored " + lanScore.Score);
+
+		var chatty = new List<Observation>();
+		foreach (var port in lanPorts)
+			chatty.Add(Tcp(t0, port));
+		for (var i = 0; i < 8; i++)
+			chatty.Add(Tcp(t0.AddMilliseconds(200 * i), 445));
+		if (Score("smb", chatty, "").Signals.Any(s => s.Name == "port_sweep"))
+			failures.Add("smb fan-out counted as a sweep");
+
+		var poll = new List<Observation>();
+		for (var i = 0; i < 40; i++)
+			poll.Add(Tcp(t0.AddSeconds(i * 30), 5357));
+		var pollScore = Score("poll", poll, "");
+		if (pollScore.Band is "challenge" or "block" || pollScore.Action is "challenge" or "block")
+			failures.Add("30s poll scored " + pollScore.Score + " " + pollScore.Band);
+
+		var sweep = new List<Observation>();
+		for (var p = 0; p < 6; p++)
+			sweep.Add(Tcp(t0.AddSeconds(p), 2000 + p));
+		var sweepScore = Score("sweep", sweep, "");
+		if (sweepScore.Action != "block" || !sweepScore.Signals.Any(s => s.Name == "port_sweep"))
+			failures.Add("six ports in six seconds was " + sweepScore.Action);
+
+		var browserLoads = new List<Observation>();
+		for (var load = 0; load < 5; load++)
+		{
+			var start = t0.AddMinutes(load * 4);
+			for (var c = 0; c < 4; c++)
+				browserLoads.Add(Http(start.AddMilliseconds(c * 40), "/ui", ua: "Mozilla/5.0 (iPhone)", headers: ["user-agent"]));
+		}
+		var browserScore = Score("browser", browserLoads, "");
+		if (browserScore.Band == "block" || browserScore.Action == "block")
+			failures.Add("browser ui scored " + browserScore.Score);
+		if (browserScore.Signals.Any(s => s.Name is "frozen_headers" or "slow_cycle" or "paced" or "browser_hints" or "cookie_replay"))
+			failures.Add("browser ui used a dead header signal");
+
+		var hinted = new List<Observation>();
+		for (var i = 0; i < 6; i++)
+			hinted.Add(Http(t0.AddSeconds(i), "/", ua: "Mozilla/5.0", headers: ["accept", "sec-fetch-site", "user-agent"]));
+		if (!Score("hints", hinted, "").Signals.Any(s => s.Name == "browser_hints"))
+			failures.Add("sec-fetch-site did not credit the browser");
 
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 
-	static Observation Http(DateTime t, string path, string ua = "Go-http-client/1.1") => new()
+	static Observation Http(DateTime t, string path, string ua = "Go-http-client/1.1", string[]? headers = null) => new()
 	{
 		Utc = t,
 		Src = "203.0.113.8",
@@ -383,6 +522,15 @@ static class Scorer
 		Method = "GET",
 		Status = 200,
 		UserAgent = ua,
-		Headers = ["accept", "user-agent"]
+		Headers = headers ?? ["accept", "user-agent"]
+	};
+
+	static Observation Tcp(DateTime t, int port) => new()
+	{
+		Utc = t,
+		Src = "198.51.100.4",
+		LocalPort = port,
+		Kind = ObsKind.Tcp,
+		Method = "TCP"
 	};
 }

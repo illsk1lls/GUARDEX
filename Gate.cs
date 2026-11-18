@@ -54,9 +54,10 @@ static class LaunchRules
 		if (child.Equals(parentName, StringComparison.OrdinalIgnoreCase)) return "allow";
 		if (Helpers.Contains(child)) return "allow";
 		if (Vehicles.Contains(child)) return "stop";
+		var dropped = DropFolder(path);
+		if (dropped == "Temp") return "stop";
+		if (dropped == "Downloads") return "watch";
 		if (Vendor(path) || Boxed(path)) return "allow";
-		if (Has(path, "\\temp\\")) return "stop";
-		if (Has(path, "\\downloads\\")) return "watch";
 		return "allow";
 	}
 
@@ -64,7 +65,13 @@ static class LaunchRules
 	{
 		if (Bare(name).Length == 0 || path.Length == 0) return null;
 		if (IsBrowser(name) || Helpers.Contains(Bare(name))) return null;
-		if (Vendor(path) || Boxed(path)) return null;
+		var dropped = DropFolder(path);
+		if (dropped != null) return dropped;
+		return null;
+	}
+
+	static string? DropFolder(string path)
+	{
 		if (Has(path, "\\temp\\")) return "Temp";
 		if (Has(path, "\\downloads\\")) return "Downloads";
 		return null;
@@ -82,12 +89,22 @@ static class LaunchRules
 			|| Has(text, "\\vivaldi\\");
 	}
 
+	// A real install directory, as a prefix. A folder named windows inside Temp is not Windows.
 	static bool Boxed(string path)
 	{
 		var text = path.Replace('/', '\\');
-		return Has(text, "\\program files\\")
-			|| Has(text, "\\program files (x86)\\")
-			|| Has(text, "\\windows\\");
+		foreach (var root in new[]
+		{
+			Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+		})
+		{
+			if (root.Length == 0) continue;
+			var prefix = root.TrimEnd('\\') + "\\";
+			if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+		}
+		return false;
 	}
 
 	static bool Has(string path, string part) =>
@@ -124,6 +141,18 @@ static class LaunchRules
 			failures.Add("download drop");
 		if (Drop("OneDrive", @"C:\Program Files\Microsoft OneDrive\OneDrive.exe") != null)
 			failures.Add("program files drop");
+		if (Decide("chrome", "payload", @"C:\Users\a\AppData\Local\Temp\windows\x.exe", false) != "stop")
+			failures.Add("temp windows bypass");
+		if (Decide("chrome", "payload", @"C:\Users\a\AppData\Local\Temp\Program Files\x.exe", false) != "stop")
+			failures.Add("temp program files bypass");
+		if (Decide("chrome", "payload", @"C:\Windows\Temp\x.exe", false) != "stop")
+			failures.Add("windows temp");
+		if (Decide("chrome", "widget", @"C:\Program Files\App\widget.exe", false) != "allow")
+			failures.Add("real program files");
+		if (Drop("payload", @"C:\Users\a\AppData\Local\Temp\windows\x.exe") != "Temp")
+			failures.Add("temp windows drop");
+		if (Drop("payload", @"C:\Users\a\AppData\Local\Temp\google\chrome\x.exe") != "Temp")
+			failures.Add("temp vendor bypass");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 }

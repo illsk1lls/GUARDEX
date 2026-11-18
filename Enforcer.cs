@@ -12,6 +12,7 @@ sealed class Enforcer
 	readonly SessionStore _store;
 	readonly object _gate = new();
 	readonly Dictionary<string, Hold> _holds = new(StringComparer.Ordinal);
+	readonly Dictionary<string, (int Count, DateTime UntilUtc)> _strikes = new(StringComparer.Ordinal);
 	readonly bool _admin;
 	bool _want;
 	CancellationTokenSource? _cts;
@@ -67,7 +68,7 @@ sealed class Enforcer
 		Publish();
 	}
 
-	public void Release(string src) => Lift(src, "Released from the window.");
+	public void Release(string src) => Lift(src, "Released from the window.", false);
 
 	public void OnVerdict(Verdict verdict, bool fromModel)
 	{
@@ -81,7 +82,7 @@ sealed class Enforcer
 			Hold? existing;
 			lock (_gate) _holds.TryGetValue(ip, out existing);
 			if (existing != null && !existing.Hard)
-				Lift(ip, "The model stepped this source down.");
+				Lift(ip, "The model stepped this source down.", false);
 			return;
 		}
 		if (!want) return;
@@ -92,16 +93,28 @@ sealed class Enforcer
 		lock (_gate)
 		{
 			_holds.TryGetValue(ip, out var existing);
-			var still = existing != null && existing.UntilUtc > DateTime.UtcNow.AddMinutes(2);
+			var now = DateTime.UtcNow;
+			var still = existing != null && existing.UntilUtc > now.AddMinutes(2);
 			var firstConfirm = fromModel && existing != null && !existing.Confirmed;
 			if (still && !firstConfirm) return;
-			var strikes = existing == null || existing.UntilUtc <= DateTime.UtcNow ? (existing?.Strikes ?? 0) + 1 : existing.Strikes;
-			if (firstConfirm) strikes = Math.Min(4, existing!.Strikes + 1);
+			int previous;
+			bool fresh;
+			if (existing == null)
+			{
+				previous = _strikes.TryGetValue(ip, out var saved) ? Remembered(saved.Count, saved.UntilUtc, now) : 0;
+				fresh = true;
+			}
+			else
+			{
+				previous = existing.Strikes;
+				fresh = existing.UntilUtc <= now;
+			}
 			var hold = existing ?? new Hold { Ip = ip, Origin = fromModel ? "Model" : "Reflex" };
 			hold.Scenario = scenario;
 			hold.Why = verdict.Why;
-			hold.Strikes = Math.Min(4, Math.Max(1, strikes));
-			hold.UntilUtc = DateTime.UtcNow.AddMinutes(Minutes(hold.Strikes));
+			hold.Strikes = NextStrikes(previous, fresh, firstConfirm);
+			hold.UntilUtc = now.AddMinutes(Minutes(hold.Strikes));
+			_strikes[ip] = (hold.Strikes, hold.UntilUtc);
 			hold.Hard = hold.Hard || verdict.Hard;
 			hold.Confirmed = hold.Confirmed || fromModel;
 			if (hold.Note.Length == 0)
@@ -151,7 +164,7 @@ sealed class Enforcer
 			gone = _holds.Values.Where(h => h.UntilUtc <= now).Select(h => h.Ip).ToList();
 		}
 		foreach (var ip in gone)
-			Lift(ip, "The block expired.");
+			Lift(ip, "The block expired.", true);
 	}
 
 	void ApplyAll()
@@ -192,12 +205,14 @@ sealed class Enforcer
 		}
 	}
 
-	void Lift(string ip, string why)
+	void Lift(string ip, string why, bool keepStrikes)
 	{
 		Hold? hold;
 		lock (_gate)
 		{
 			if (!_holds.Remove(ip, out hold)) return;
+			if (!keepStrikes) _strikes.Remove(ip);
+			else _strikes[ip] = (hold.Strikes, hold.UntilUtc);
 		}
 		if (hold.Applied && _admin)
 		{
@@ -333,6 +348,27 @@ sealed class Enforcer
 		return false;
 	}
 
+	public static int Remembered(int count, DateTime untilUtc, DateTime now)
+	{
+		if (count <= 0) return 0;
+		if (untilUtc <= now.AddHours(-24)) return 0;
+		return Math.Min(count, 4);
+	}
+
+	public static int NextStrikes(int previous, bool fresh, bool firstConfirm)
+	{
+		var strikes = firstConfirm || fresh ? previous + 1 : previous;
+		if (strikes < 1) strikes = 1;
+		if (strikes > 4) strikes = 4;
+		return strikes;
+	}
+
+	public static int StrikesAfterGap(int finished, DateTime blockEndedUtc, DateTime now, bool cleared)
+	{
+		var remembered = cleared ? 0 : Remembered(finished, blockEndedUtc, now);
+		return NextStrikes(remembered, true, false);
+	}
+
 	public static string SelfCheck()
 	{
 		var failures = new List<string>();
@@ -342,6 +378,15 @@ sealed class Enforcer
 		if (!IsReserved("224.0.0.1")) failures.Add("multicast");
 		if (IsReserved("203.0.113.8")) failures.Add("documentation address was reserved");
 		if (IsReserved("10.1.1.8")) failures.Add("lan address was reserved");
+		var now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+		if (StrikesAfterGap(1, now.AddMinutes(-1), now, false) != 2) failures.Add("expired block forgot the strike");
+		if (StrikesAfterGap(2, now.AddMinutes(-30), now, false) != 3) failures.Add("third strike");
+		if (StrikesAfterGap(4, now.AddMinutes(-30), now, false) != 4) failures.Add("strike cap");
+		if (StrikesAfterGap(3, now.AddMinutes(-30), now, true) != 1) failures.Add("release kept the strike");
+		if (StrikesAfterGap(2, now.AddHours(-25), now, false) != 1) failures.Add("old strike did not decay");
+		if (NextStrikes(2, false, true) != 3) failures.Add("confirm did not step the strike");
+		if (Minutes(1) != 10 || Minutes(2) != 30 || Minutes(3) != 120 || Minutes(4) != 720)
+			failures.Add("block lengths");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 
