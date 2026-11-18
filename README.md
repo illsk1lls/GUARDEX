@@ -1,8 +1,10 @@
-# GUARDEX
+# GUARDEX (WIP)
 
-Host defense for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask the person at the keyboard about a single new event.
+Host defense system for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask the person at the keyboard about suspicious behavior.
 
-The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX shows the window. The pages are Traffic, Blocks, Host, Remote, and Site. The window uses its own title bar.
+The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX shows the window. The pages are Traffic, Blocks, Host, Remote, and Site (To probe specific sites for strange routing).
+
+A local model can be connected via the flyout or main window.
 
 ## Inbound traffic
 
