@@ -42,6 +42,8 @@ The first sweep records what is already there and does not mark it. An item that
 
 Known remote-access tools are listed on the Remote page. None are allowed until checked. The choice is saved for the Windows user. An unchecked tool is stopped, including its service when the process is elevated. Programs that are not on the list are left alone.
 
+A distinctive program name matches on its own. A generic name such as `agent.exe` or `update.exe` is left alone unless the file's version information or signature names a known product. A renamed ScreenConnect client is still recognized when the file says ScreenConnect.
+
 Incoming Remote Desktop is disconnected only when someone is also signed in at the console. Allow RDP on the Remote page if you sign in from another computer.
 
 ## Page launches
@@ -58,14 +60,45 @@ A clipboard value that is a wallet address is restored if a different address of
 
 The Site page loads an address in a separate browser view, not the signed-in profile. It lists calls the page makes. Same-site files are omitted. A third-party script is shown. A third-party script that then calls a different host is marked, as is a call to a raw IP address. Form data and response bodies are not read. Downloads from that view are cancelled.
 
-## Run
+## Packages
+
+The source does not contain the NuGet packages. `dotnet restore` downloads them. Copying the repository to another machine and building without that step fails.
+
+| Package | Version | What it is |
+| --- | --- | --- |
+| Microsoft.Diagnostics.Tracing.TraceEvent | 3.1.21 | Reads HTTP.sys request lines |
+| Microsoft.Web.WebView2 | 1.0.4314.35 | Site page browser view |
 
 ```powershell
+dotnet restore
+dotnet build
 dotnet run
 ```
 
-Requires the [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) and the Edge WebView2 runtime for the Site page.
+Building needs the [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). Running a build that is not self-contained needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). The Site page needs the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
 Run elevated for firewall rules, HTTP.sys request paths, and stopping a remote-access service. Without elevation, connections and findings are still reported.
 
 `dotnet run -- --check` runs the rule self-checks. `dotnet run -- --posture` prints a startup sweep and does not save the baseline.
+
+## Install
+
+The release file is `GUARDEX-Setup.exe`. It carries its own runtime, so it opens on a machine that does not have .NET 10 yet. It asks for administrator approval, then:
+
+1. Installs the .NET 10 Desktop Runtime from Microsoft when that runtime is missing.
+2. Installs the WebView2 runtime from Microsoft when that runtime is missing.
+3. Copies GUARDEX into `C:\Program Files\GUARDEX`.
+4. Adds a Start menu shortcut.
+5. Can start GUARDEX at sign-in.
+
+The downloads are the official Microsoft links `https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe` and `https://go.microsoft.com/fwlink/p/?LinkId=2124703`.
+
+To build that setup on a machine that already has the SDK:
+
+```powershell
+.\build-release.ps1
+```
+
+The installer is written to `artifacts\GUARDEX-Setup.exe`.
+
+GUARDEX does not load a filesystem minifilter and it does not register itself as the Windows antivirus. Windows only lists an antivirus that Microsoft has enrolled, and a disk filter is a signed kernel driver. This program does not turn Windows Defender off. The sign-in option starts the same user-mode guard when you sign in, so the firewall rules, remote-tool stops, and launch checks keep running.

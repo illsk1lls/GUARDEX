@@ -1,0 +1,134 @@
+<Window x:Class="Guardex.Setup.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="GUARDEX Setup"
+        Width="560" Height="360"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#121611"
+        Foreground="#E4ECDF"
+        FontFamily="Segoe UI">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <Style x:Key="CaptionButton" TargetType="Button">
+      <Setter Property="Width" Value="46"/>
+      <Setter Property="Height" Value="40"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#273222"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CloseButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#6B3030"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#273222"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#32402C"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal">
+              <Border x:Name="Box" Width="14" Height="14" CornerRadius="2" BorderBrush="#8EA088" BorderThickness="1" Background="#1B2119" Margin="0,0,8,0" VerticalAlignment="Center">
+                <Path x:Name="Mark" Data="M1.5,4.5 L4,7.5 L9.5,1.5" Stroke="#8FB573" StrokeThickness="1.6" Visibility="Collapsed" Stretch="Uniform" Margin="2"/>
+              </Border>
+              <ContentPresenter VerticalAlignment="Center"/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Mark" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="Box" Property="BorderBrush" Value="#8FB573"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ProgressBar">
+      <Setter Property="Height" Value="10"/>
+      <Setter Property="Foreground" Value="#8FB573"/>
+      <Setter Property="Background" Value="#1B2119"/>
+      <Setter Property="BorderBrush" Value="#2C3828"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+  </Window.Resources>
+  <DockPanel>
+    <Grid DockPanel.Dock="Top" Height="40" Background="#121611">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+        <Path Width="16" Height="20" Stretch="Fill" Fill="#8FB573" Data="M9,0 L18,3.5 L16.5,12 L9,22 L1.5,12 L0,3.5 Z" Margin="0,0,10,0" VerticalAlignment="Center"/>
+        <TextBlock Text="GUARDEX Setup" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize"/>
+        <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close"/>
+      </StackPanel>
+    </Grid>
+    <StackPanel Margin="22,8,22,18">
+      <TextBlock TextWrapping="Wrap" LineHeight="20" Text="Installs GUARDEX for this PC. If the .NET 10 Desktop Runtime or the Edge WebView2 runtime is missing, they are downloaded from Microsoft."/>
+      <TextBlock Margin="0,8,0,0" Foreground="#8EA088" TextWrapping="Wrap" Text="This does not replace Windows Security and it does not install a disk filter."/>
+      <TextBlock x:Name="StepText" Margin="0,18,0,8" Text="Ready to install."/>
+      <ProgressBar x:Name="Bar" Minimum="0" Maximum="100" Height="12"/>
+      <CheckBox x:Name="SignInBox" Margin="0,16,0,0" IsChecked="True" Content="Start GUARDEX when I sign in"/>
+      <Button x:Name="InstallButton" HorizontalAlignment="Left" Margin="0,16,0,0" Content="Install" Click="OnInstall"/>
+    </StackPanel>
+  </DockPanel>
+</Window>

@@ -40,8 +40,8 @@ static class PostureRules
 			return ("watch", "A group policy script is present.");
 		}
 
-		var exe = RemoteCatalog.ExeFile(command);
-		var product = exe == null ? null : RemoteCatalog.Match(exe);
+		var full = RemoteCatalog.ExePath(command);
+		var product = full == null ? null : RemoteCatalog.Identify(Path.GetFileName(full), File.Exists(full) ? full : null);
 		if (product != null && !RemoteCatalog.IsAllowed(product.Id))
 			return ("block", product.Name + " is set to start and is not on the allow list.");
 		return Rate(command);
