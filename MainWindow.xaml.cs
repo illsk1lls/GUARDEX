@@ -1,12 +1,9 @@
-using System.Collections.ObjectModel;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Microsoft.Web.WebView2.Core;
 
 namespace Guardex;
 
@@ -30,12 +27,6 @@ public partial class MainWindow : Window
 	string _findSig = "";
 	string _remoteSig = "";
 	int _gen = -1;
-	readonly ObservableCollection<LinkRow> _siteLinks = [];
-	readonly List<SiteCall> _siteCalls = [];
-	readonly HashSet<string> _siteSeen = new(StringComparer.Ordinal);
-	string _sitePage = "";
-	bool _siteReady;
-
 	public event Action<string>? ConnectRequested;
 	public event Action<string>? EndpointEdited;
 	public event Action<bool>? EnforceRequested;
@@ -54,7 +45,6 @@ public partial class MainWindow : Window
 			var source = (HwndSource?)PresentationSource.FromVisual(this);
 			source?.AddHook(WindowProc);
 		};
-		SiteLinks.ItemsSource = _siteLinks;
 		Show("traffic");
 		_timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
 		_timer.Tick += (_, _) => RefreshNow();
@@ -200,6 +190,7 @@ public partial class MainWindow : Window
 		HostPage.Visibility = page == "host" ? Visibility.Visible : Visibility.Collapsed;
 		RemotePage.Visibility = page == "remote" ? Visibility.Visible : Visibility.Collapsed;
 		SitePage.Visibility = page == "site" ? Visibility.Visible : Visibility.Collapsed;
+		if (page == "site") SitePage.Wake();
 		PaintNav();
 	}
 
@@ -265,110 +256,6 @@ public partial class MainWindow : Window
 		else if (sender == NavSite) Show("site");
 		else Show("traffic");
 	}
-
-	async void OnSiteOpen(object sender, RoutedEventArgs e)
-	{
-		if (!LinkRules.TryPage(SiteUrl.Text, out var url, out var error))
-		{
-			SiteStatus.Text = error;
-			return;
-		}
-		SiteButton.IsEnabled = false;
-		try
-		{
-			await EnsureSite();
-			_sitePage = url;
-			_siteCalls.Clear();
-			_siteSeen.Clear();
-			_siteLinks.Clear();
-			SiteStatus.Text = "Opening " + url;
-			SiteView.CoreWebView2.Navigate(url);
-		}
-		catch (WebView2RuntimeNotFoundException)
-		{
-			SiteStatus.Text = "The Edge WebView2 runtime is not installed, so this pane cannot open the page.";
-		}
-		catch (Exception ex)
-		{
-			SiteStatus.Text = ex.Message;
-		}
-		finally
-		{
-			SiteButton.IsEnabled = true;
-		}
-	}
-
-	async Task EnsureSite()
-	{
-		if (_siteReady) return;
-		var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Guardex", "site-view");
-		Directory.CreateDirectory(folder);
-		var env = await CoreWebView2Environment.CreateAsync(null, folder);
-		await SiteView.EnsureCoreWebView2Async(env);
-		var core = SiteView.CoreWebView2;
-		core.Settings.IsPasswordAutosaveEnabled = false;
-		core.Settings.IsGeneralAutofillEnabled = false;
-		core.DownloadStarting += (_, args) =>
-		{
-			args.Cancel = true;
-			args.Handled = true;
-		};
-		core.NewWindowRequested += (_, args) =>
-		{
-			args.Handled = true;
-			if (!string.IsNullOrWhiteSpace(args.Uri)) core.Navigate(args.Uri);
-		};
-		core.NavigationCompleted += (_, args) =>
-		{
-			if (core.Source != null && !string.IsNullOrWhiteSpace(core.Source))
-				_sitePage = core.Source;
-			PaintSite(args.IsSuccess ? "" : "The page did not finish loading.");
-		};
-		await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
-		var receiver = core.GetDevToolsProtocolEventReceiver("Network.requestWillBeSent");
-		receiver.DevToolsProtocolEventReceived += (_, args) => OnSiteCall(args.ParameterObjectAsJson);
-		_siteReady = true;
-	}
-
-	void OnSiteCall(string json)
-	{
-		if (!LinkRules.Read(json, _sitePage, out var url, out var type, out var initiator)) return;
-		Dispatcher.BeginInvoke(new Action(() =>
-		{
-			if (_siteCalls.Count < 400)
-				_siteCalls.Add(new SiteCall(url, type, initiator));
-			PaintSite("");
-		}));
-	}
-
-	void PaintSite(string note)
-	{
-		_siteLinks.Clear();
-		_siteSeen.Clear();
-		var watch = 0;
-		var block = 0;
-		foreach (var call in _siteCalls)
-		{
-			var row = LinkRules.Row(_sitePage, call.Url, call.Type, call.Initiator);
-			if (row == null) continue;
-			var key = row.Band + "|" + row.Kind + "|" + row.Host + "|" + row.Path;
-			if (!_siteSeen.Add(key)) continue;
-			if (row.Band == "block")
-			{
-				block++;
-				_siteLinks.Insert(0, row);
-			}
-			else
-			{
-				watch++;
-				_siteLinks.Add(row);
-			}
-		}
-		var summary = block + " second-hop or address calls. " + watch + " third-party calls.";
-		SiteStatus.Text = note.Length == 0 ? summary : note + " " + summary;
-	}
-
-	readonly record struct SiteCall(string Url, string Type, string Initiator);
 
 	void OnAskYes(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(true);
 

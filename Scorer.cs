@@ -9,6 +9,7 @@ static class Scorer
 		var http = items.Where(e => e.Kind == ObsKind.Http).ToList();
 
 		var families = new HashSet<string>();
+		var probes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		var paths = new HashSet<string>(StringComparer.Ordinal);
 		var queries = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 		var headerCounts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -33,6 +34,9 @@ static class Scorer
 				queries[path] = qs;
 			}
 			qs.Add(e.Query ?? "");
+
+			var probe = ProbeHit(path);
+			if (probe != null) probes.Add(probe);
 
 			if (CanaryHit(path, canary) && seenHard.Add("canary"))
 				signals.Add(new Signal { Name = "canary", Weight = 100, Detail = "hit " + canary, Hard = true });
@@ -62,8 +66,16 @@ static class Scorer
 			signals.Add(Soft("go_client", 20, "Go-http-client, the platform default when no target User-Agent is set"));
 		if (families.Contains("curl") || families.Contains("python"))
 			signals.Add(Soft("shell_http", 8, "curl or python-requests"));
+		if (families.Contains("headless"))
+			signals.Add(Soft("headless", 20, "HeadlessChrome or PhantomJS"));
 		if (families.Count >= 2)
 			signals.Add(Soft("mixed_clients", 25, "families " + string.Join(", ", families.OrderBy(f => f))));
+
+		// A person can open a couple of these. A burst is a scan. The detail stores the count only.
+		if (probes.Count >= 6)
+			signals.Add(new Signal { Name = "probe_paths", Weight = 100, Detail = probes.Count + " well-known sensitive paths", Hard = true });
+		else if (probes.Count >= 4)
+			signals.Add(Soft("probe_paths", 30, probes.Count + " well-known sensitive paths"));
 
 		// A browser refreshing a page leaves the same gaps as a slow model.
 		// Those timing signals stay on scripted clients. A spoofed browser
@@ -318,27 +330,115 @@ static class Scorer
 		return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 	}
 
+	// Longer marks come first. python-httpx is the Python library, not the scanner named httpx.
+	// "zap/" is the scanner's version token. The bare word zap is not a mark.
+	static readonly (string Token, string Family)[] ScannerMarks =
+	[
+		("nuclei", "nuclei"),
+		("sqlmap", "sqlmap"),
+		("fuzz faster u fool", "ffuf"),
+		("ffuf", "ffuf"),
+		("dalfox", "dalfox"),
+		("katana", "katana"),
+		("feroxbuster", "feroxbuster"),
+		("wfuzz", "wfuzz"),
+		("dirbuster", "dirbuster"),
+		("dirb", "dirb"),
+		("whatweb", "whatweb"),
+		("acunetix", "acunetix"),
+		("nessus", "nessus"),
+		("openvas", "openvas"),
+		("netsparker", "netsparker"),
+		("invicti", "invicti"),
+		("zaproxy", "zaproxy"),
+		("owasp zap", "zaproxy"),
+		("zap/", "zaproxy"),
+		("scrapy", "scrapy"),
+		("arjun", "arjun"),
+		("rustscan", "rustscan"),
+		("naabu", "naabu"),
+		("shodan", "shodan"),
+		("censys", "censys"),
+		("l9scan", "l9scan"),
+		("skipfish", "skipfish"),
+		("arachni", "arachni"),
+		("commix", "commix"),
+		("httpx", "httpx"),
+		("nikto", "scanner"),
+		("nmap", "scanner"),
+		("masscan", "scanner"),
+		("gobuster", "scanner"),
+		("wpscan", "scanner"),
+		("zgrab", "scanner")
+	];
+
+	// Well-known locations only. Longer names are first so /actuator/env is not also /actuator.
+	static readonly string[] ProbePaths =
+	[
+		"/.aws/credentials",
+		"/vendor/phpunit",
+		"/server-status",
+		"/wp-login.php",
+		"/manager/html",
+		"/actuator/env",
+		"/.git/config",
+		"/server-info",
+		"/.svn/entries",
+		"/xmlrpc.php",
+		"/phpmyadmin",
+		"/web.config",
+		"/elmah.axd",
+		"/.git/head",
+		"/wp-admin",
+		"/actuator",
+		"/owa/auth",
+		"/boaform",
+		"/jenkins",
+		"/.env",
+		"/pma"
+	];
+
 	public static string UaFamily(string? ua)
 	{
 		var u = (ua ?? "").ToLowerInvariant();
-		if (u.Contains("nuclei")) return "nuclei";
-		if (u.Contains("sqlmap")) return "sqlmap";
-		if (u.Contains("ffuf") || u.Contains("fuzz faster u fool")) return "ffuf";
-		if (u.Contains("dalfox")) return "dalfox";
-		if (u.Contains("katana")) return "katana";
-		if (u.Contains("httpx")) return "httpx";
-		if (u.Contains("nikto") || u.Contains("nmap") || u.Contains("masscan") || u.Contains("gobuster") || u.Contains("dirbuster") || u.Contains("wpscan") || u.Contains("zgrab"))
-			return "scanner";
+		if (u.Contains("python-httpx")) return "python";
+		foreach (var mark in ScannerMarks)
+			if (u.Contains(mark.Token)) return mark.Family;
 		if (u.Contains("go-http-client")) return "go";
 		if (u.Contains("python-requests")) return "python";
 		if (u.Contains("curl/")) return "curl";
+		if (u.Contains("headlesschrome") || u.Contains("phantomjs")) return "headless";
 		if (u.Contains("mozilla/")) return "browser";
 		if (u.Length == 0) return "empty";
 		return "other";
 	}
 
-	static bool IsScanner(string fam) =>
-		fam is "nuclei" or "sqlmap" or "ffuf" or "dalfox" or "katana" or "httpx" or "scanner";
+	static bool IsScanner(string fam) => fam is "nuclei" or "sqlmap" or "ffuf" or "dalfox" or "katana" or "httpx" or "scanner"
+		or "feroxbuster" or "wfuzz" or "dirb" or "dirbuster" or "whatweb" or "acunetix" or "nessus" or "openvas"
+		or "netsparker" or "invicti" or "zaproxy" or "scrapy" or "arjun" or "rustscan" or "naabu" or "shodan"
+		or "censys" or "l9scan" or "skipfish" or "arachni" or "commix";
+
+	static string? ProbeHit(string path)
+	{
+		var text = path.Trim();
+		var scheme = text.IndexOf("://", StringComparison.Ordinal);
+		if (scheme >= 0)
+		{
+			var slash = text.IndexOf('/', scheme + 3);
+			text = slash >= 0 ? text[slash..] : "/";
+		}
+		var query = text.IndexOf('?');
+		if (query >= 0) text = text[..query];
+		if (text.Length == 0 || text == "/") return null;
+		if (text[0] != '/') text = "/" + text;
+		if (text.Length > 1) text = text.TrimEnd('/');
+		foreach (var probe in ProbePaths)
+		{
+			if (text.Equals(probe, StringComparison.OrdinalIgnoreCase)) return probe;
+			if (text.StartsWith(probe + "/", StringComparison.OrdinalIgnoreCase)) return probe;
+		}
+		return null;
+	}
 
 	static string HeaderKey(string[] headers) =>
 		string.Join(",", headers.Select(h => h.Trim().ToLowerInvariant()).Where(h => h.Length > 0).Distinct().OrderBy(h => h));
@@ -508,6 +608,71 @@ static class Scorer
 			hinted.Add(Http(t0.AddSeconds(i), "/", ua: "Mozilla/5.0", headers: ["accept", "sec-fetch-site", "user-agent"]));
 		if (!Score("hints", hinted, "").Signals.Any(s => s.Name == "browser_hints"))
 			failures.Add("sec-fetch-site did not credit the browser");
+
+		var ferox = Score("ferox", [Http(t0, "/", ua: "feroxbuster/2.13.1")], "");
+		if (!ferox.Hard || ferox.Band != "block" || ferox.Action != "block" || !ferox.Signals.Any(s => s.Name == "scanner_ua"))
+			failures.Add("feroxbuster was not a hard block");
+
+		var library = Score("library", [Http(t0, "/", ua: "python-httpx/0.28.1")], "");
+		if (library.Hard || library.Band == "block" || library.Signals.Any(s => s.Name == "scanner_ua") || !library.Families.Contains("python"))
+			failures.Add("python-httpx family " + library.Families + " band " + library.Band);
+
+		var headless = Score("headless", [Http(t0, "/", ua: "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 HeadlessChrome/120.0.0.0")], "");
+		if (headless.Hard || headless.Band != "allow" || headless.Action == "block" || !headless.Signals.Any(s => s.Name == "headless" && !s.Hard))
+			failures.Add("headless chrome scored " + headless.Score + " " + headless.Band);
+
+		var phantom = Score("phantom", [Http(t0, "/", ua: "Mozilla/5.0 PhantomJS/2.1.1")], "");
+		if (phantom.Hard || phantom.Band != "allow" || !phantom.Signals.Any(s => s.Name == "headless"))
+			failures.Add("phantomjs scored " + phantom.Score + " " + phantom.Band);
+
+		var onePath = Score("one", [Http(t0, "/.env", ua: "Mozilla/5.0")], "");
+		if (onePath.Band == "block" || onePath.Signals.Any(s => s.Name is "probe_paths" or "scanner_ua"))
+			failures.Add("one sensitive path scored " + onePath.Score + " " + onePath.Band);
+
+		var page = Score("page", [Http(t0, "/index.html", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")], "");
+		if (page.Band == "block" || page.Signals.Any(s => s.Name is "scanner_ua" or "probe_paths" or "headless"))
+			failures.Add("mozilla page looked like a scanner");
+
+		string[] fourPaths = ["/.env", "/.git/config", "/wp-login.php", "/phpmyadmin/index.php"];
+		var four = new List<Observation>();
+		for (var i = 0; i < fourPaths.Length; i++)
+			four.Add(Http(t0.AddSeconds(i), fourPaths[i], ua: "Mozilla/5.0"));
+		var fourScore = Score("four", four, "");
+		if (fourScore.Hard || fourScore.Action == "block" || fourScore.Band is "allow" or "block" || !fourScore.Signals.Any(s => s.Name == "probe_paths" && !s.Hard))
+			failures.Add("four sensitive paths scored " + fourScore.Score + " " + fourScore.Band + " " + fourScore.Action);
+
+		string[] sixPaths = ["/.env", "/.git/config", "/.git/HEAD", "/.aws/credentials", "/wp-login.php", "http://example/phpmyadmin"];
+		var six = new List<Observation>();
+		for (var i = 0; i < sixPaths.Length; i++)
+			six.Add(Http(t0.AddSeconds(i), sixPaths[i], ua: "Mozilla/5.0"));
+		var sixScore = Score("six", six, "");
+		if (!sixScore.Hard || sixScore.Action != "block" || !sixScore.Signals.Any(s => s.Name == "probe_paths" && s.Hard))
+			failures.Add("six sensitive paths were " + sixScore.Action);
+
+		var ordinary = new List<Observation>
+		{
+			Http(t0, "/.env", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(1), "/wp-admin", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(2), "/jenkins", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(3), "/wp-content/themes/a", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(4), "/admin", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(5), "/notes", ua: "Mozilla/5.0")
+		};
+		if (Score("ordinary", ordinary, "").Signals.Any(s => s.Name == "probe_paths"))
+			failures.Add("ordinary paths raised the probe count");
+
+		var longest = new List<Observation>
+		{
+			Http(t0, "/.env", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(1), "/wp-admin", ua: "Mozilla/5.0"),
+			Http(t0.AddSeconds(2), "/actuator/env", ua: "Mozilla/5.0")
+		};
+		if (Score("longest", longest, "").Signals.Any(s => s.Name == "probe_paths"))
+			failures.Add("a longer probe name was counted twice");
+
+		var zap = Score("zap", [Http(t0, "/", ua: "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36")], "");
+		if (zap.Signals.Any(s => s.Name == "scanner_ua"))
+			failures.Add("a browser name containing no scanner token was a scanner");
 
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}

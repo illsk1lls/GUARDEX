@@ -1,7 +1,7 @@
 <Window x:Class="Guardex.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:local="clr-namespace:Guardex"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="GUARDEX"
         Width="1040" Height="720"
@@ -345,58 +345,7 @@
       </ListBox>
     </Grid>
 
-    <Grid x:Name="SitePage" Visibility="Collapsed">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="*"/>
-      </Grid.RowDefinitions>
-      <TextBlock TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
-                 Text="This opens the page in a separate browser, not your signed-in one, and lists the calls the page makes. A third-party script is shown. A script that then calls a different host is marked. Form data and response bodies are not read."/>
-      <DockPanel Grid.Row="1" Margin="0,0,0,8">
-        <Button x:Name="SiteButton" DockPanel.Dock="Right" Content="Open" Click="OnSiteOpen" Margin="8,0,0,0"/>
-        <TextBox x:Name="SiteUrl" Height="28" VerticalContentAlignment="Center" Padding="6,0"/>
-      </DockPanel>
-      <Grid Grid.Row="2">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="1.05*"/>
-          <ColumnDefinition Width="12"/>
-          <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
-        <DockPanel>
-          <TextBlock x:Name="SiteStatus" DockPanel.Dock="Top" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8" Text="No page open."/>
-          <ListBox x:Name="SiteLinks">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <StackPanel>
-                  <DockPanel>
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding Band}" FontFamily="Consolas">
-                      <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                          <Setter Property="Foreground" Value="#E0C080"/>
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding Band}" Value="block">
-                              <Setter Property="Foreground" Value="#E0A0A0"/>
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </TextBlock.Style>
-                    </TextBlock>
-                    <TextBlock Text="{Binding Kind}" Foreground="#8EA088" FontFamily="Consolas" Margin="0,0,8,0"/>
-                    <TextBlock Text="{Binding Host}" FontFamily="Consolas"/>
-                  </DockPanel>
-                  <TextBlock Text="{Binding Path}" Foreground="#8EA088" TextWrapping="Wrap"/>
-                  <TextBlock Text="{Binding Why}" TextWrapping="Wrap"/>
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </DockPanel>
-        <Border Grid.Column="2" Background="#0E120D" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="4">
-          <wv2:WebView2 x:Name="SiteView"/>
-        </Border>
-      </Grid>
-    </Grid>
+    <local:SiteBrowser x:Name="SitePage" Visibility="Collapsed"/>
     </Grid>
   </DockPanel>
 </Window>

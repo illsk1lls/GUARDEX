@@ -33,6 +33,17 @@ static class LaunchRules
 		"cmstp", "diskshadow", "forfiles", "odbcconf", "presentationhost", "autoit3", "autoit"
 	};
 
+	// Exact names. A browser that starts one is stopped. Explorer is not a browser, so the person's own copy is left alone.
+	static readonly HashSet<string> Tools = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"nuclei", "sqlmap", "nmap", "masscan", "rustscan", "naabu", "ffuf", "gobuster",
+		"feroxbuster", "nikto", "wpscan", "wfuzz", "hydra", "medusa", "mimikatz",
+		"sharphound", "rubeus", "lazagne", "metasploit", "msfconsole", "msfvenom",
+		"meterpreter", "sliver", "havoc", "netexec", "crackmapexec", "responder",
+		"kerbrute", "bloodhound", "chisel", "ligolo", "ligolo-proxy", "ligolo-agent",
+		"burpsuite", "burpsuitecommunity", "burpsuitepro"
+	};
+
 	public static string Bare(string name)
 	{
 		var text = name.Trim().Trim('"');
@@ -53,7 +64,7 @@ static class LaunchRules
 		if (child.Length == 0 || !Browsers.Contains(parentName)) return "allow";
 		if (child.Equals(parentName, StringComparison.OrdinalIgnoreCase)) return "allow";
 		if (Helpers.Contains(child)) return "allow";
-		if (Vehicles.Contains(child)) return "stop";
+		if (Vehicles.Contains(child) || Tools.Contains(child)) return "stop";
 		var dropped = DropFolder(path);
 		if (dropped == "Temp") return "stop";
 		if (dropped == "Downloads") return "watch";
@@ -153,6 +164,18 @@ static class LaunchRules
 			failures.Add("temp windows drop");
 		if (Drop("payload", @"C:\Users\a\AppData\Local\Temp\google\chrome\x.exe") != "Temp")
 			failures.Add("temp vendor bypass");
+		if (Decide("chrome", "nuclei.exe", @"C:\Tools\nuclei.exe", false) != "stop")
+			failures.Add("browser nuclei");
+		if (Decide("explorer", "nuclei.exe", @"C:\Tools\nuclei.exe", false) != "allow")
+			failures.Add("explorer nuclei");
+		if (Decide("chrome", "nmap", @"C:\Program Files\Nmap\nmap.exe", false) != "stop")
+			failures.Add("browser nmap in program files");
+		if (Decide("explorer", "mimikatz", @"C:\Users\a\AppData\Local\Temp\mimikatz.exe", false) != "allow")
+			failures.Add("explorer tool");
+		if (Decide("chrome", "nc", @"C:\Tools\nc.exe", false) != "allow")
+			failures.Add("bare nc");
+		if (Decide("chrome", "nuclei", @"C:\Tools\nuclei.exe", true) != "allow")
+			failures.Add("allowed tool");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 }
