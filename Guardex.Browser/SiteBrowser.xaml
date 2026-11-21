@@ -247,6 +247,7 @@
         <Grid x:Name="HistoryPane" Background="#121611">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -255,7 +256,17 @@
             <Button DockPanel.Dock="Right" Content="Clear" Click="OnClearBookmarks" Margin="8,0,0,0"/>
             <TextBlock Text="Bookmarks" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
           </DockPanel>
-          <ListBox x:Name="BookmarkList" Grid.Row="1" Margin="16,0,16,8" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
+          <StackPanel Grid.Row="1" Margin="16,0,16,8">
+            <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import favorites from one browser at a time. If that browser has more than one profile, pick one profile."/>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+              <Button Content="Chrome" Tag="chrome" Click="OnImportBrowser" Margin="0,0,8,0"/>
+              <Button Content="Edge" Tag="edge" Click="OnImportBrowser" Margin="0,0,8,0"/>
+              <Button Content="Firefox" Tag="firefox" Click="OnImportBrowser"/>
+            </StackPanel>
+            <WrapPanel x:Name="BookmarkImportChoices" Margin="0,8,0,0"/>
+            <TextBlock x:Name="BookmarkImportStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,6,0,0"/>
+          </StackPanel>
+          <ListBox x:Name="BookmarkList" Grid.Row="2" Margin="16,0,16,8" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <StackPanel Margin="0,4">
@@ -265,11 +276,11 @@
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
-          <DockPanel Grid.Row="2" Margin="16,4,16,4">
+          <DockPanel Grid.Row="3" Margin="16,4,16,4">
             <Button DockPanel.Dock="Right" Content="Clear" Click="OnClearHistory" Margin="8,0,0,0"/>
             <TextBlock Text="History" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
           </DockPanel>
-          <ListBox x:Name="HistoryList" Grid.Row="3" Margin="16,0,16,12" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
+          <ListBox x:Name="HistoryList" Grid.Row="4" Margin="16,0,16,12" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <DockPanel Margin="0,4">
@@ -385,6 +396,14 @@
               <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
                          Text="Passwords and autofill stay off. This browser does not use your signed-in Edge or Chrome profile."/>
               <TextBlock Text="History and bookmarks" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import favorites from one browser at a time. If that browser has more than one profile, pick one profile. Bookmarks you already have are left in place. Only http and https addresses are kept."/>
+              <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="Chrome" Tag="chrome" Click="OnImportBrowser" Margin="0,0,8,0"/>
+                <Button Content="Edge" Tag="edge" Click="OnImportBrowser" Margin="0,0,8,0"/>
+                <Button Content="Firefox" Tag="firefox" Click="OnImportBrowser"/>
+              </StackPanel>
+              <WrapPanel x:Name="SettingsImportChoices" Margin="0,8,0,0"/>
+              <TextBlock x:Name="SettingsImportStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,6,0,8"/>
               <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                 <Button Content="Clear history" Click="OnClearHistory"/>
                 <Button Content="Clear bookmarks" Margin="8,0,0,0" Click="OnClearBookmarks"/>

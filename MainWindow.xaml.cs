@@ -94,6 +94,8 @@ public partial class MainWindow : Window
 		EnforceState.Foreground = _blocking ? _green : dash.Enforce == "needs admin" ? _amber : _muted;
 		AskBar.Visibility = dash.Ask.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		AskText.Text = dash.Ask;
+		AskSubject.Text = dash.AskSubject;
+		AskSubject.Visibility = dash.AskSubject.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		RemoteBanner.Visibility = dash.Banner.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		RemoteBannerText.Text = dash.Banner;
 		NavBlocks.Content = dash.BlockCount == 0 ? "Blocks" : "Blocks  " + dash.BlockCount;
@@ -117,6 +119,14 @@ public partial class MainWindow : Window
 		else if (dash.Sources.Count == 0)
 			Detail.Text = "No inbound clients yet.";
 		Feed.Text = dash.Feed.Count == 0 ? "Waiting for traffic." : string.Join(Environment.NewLine, dash.Feed);
+		var log = string.Join(Environment.NewLine, Journal.Lines());
+		if (log.Length == 0) log = "Nothing recorded yet.";
+		if (LogBox.Text != log)
+		{
+			var atEnd = LogBox.VerticalOffset + LogBox.ViewportHeight >= LogBox.ExtentHeight - 24;
+			LogBox.Text = log;
+			if (atEnd) LogBox.ScrollToEnd();
+		}
 
 		var blockSig = string.Join("\n", dash.Blocks.Select(r => r.Src + "|" + r.State + "|" + r.Until + "|" + r.Scenario + "|" + r.Note));
 		Bind(Blocks, dash.Blocks, ref _blockSig, blockSig, _block);
@@ -174,12 +184,13 @@ public partial class MainWindow : Window
 
 	void PaintNav()
 	{
-		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote })
+		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote, NavLog })
 		{
 			var on = button == NavTraffic && _page == "traffic"
 				|| button == NavBlocks && _page == "blocks"
 				|| button == NavHost && _page == "host"
-				|| button == NavRemote && _page == "remote";
+				|| button == NavRemote && _page == "remote"
+				|| button == NavLog && _page == "log";
 			button.Background = on ? _navOn : _navOff;
 		}
 	}
@@ -191,6 +202,7 @@ public partial class MainWindow : Window
 		BlocksPage.Visibility = page == "blocks" ? Visibility.Visible : Visibility.Collapsed;
 		HostPage.Visibility = page == "host" ? Visibility.Visible : Visibility.Collapsed;
 		RemotePage.Visibility = page == "remote" ? Visibility.Visible : Visibility.Collapsed;
+		LogPage.Visibility = page == "log" ? Visibility.Visible : Visibility.Collapsed;
 		PaintNav();
 	}
 
@@ -253,6 +265,7 @@ public partial class MainWindow : Window
 		if (sender == NavBlocks) Show("blocks");
 		else if (sender == NavHost) Show("host");
 		else if (sender == NavRemote) Show("remote");
+		else if (sender == NavLog) Show("log");
 		else Show("traffic");
 	}
 

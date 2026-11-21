@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="GUARDEX Setup"
-        Width="560" Height="360"
+        Icon="pack://application:,,,/assets/guardex.ico"
+        Width="560" Height="430"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
@@ -123,7 +124,7 @@
       </StackPanel>
     </Grid>
     <StackPanel Margin="22,8,22,18">
-      <TextBlock TextWrapping="Wrap" LineHeight="20" Text="Installs GUARDEX and GUARDEX Browser for this PC. If the .NET 10 Desktop Runtime or the Edge WebView2 runtime is missing, they are downloaded from Microsoft."/>
+      <TextBlock x:Name="Intro" TextWrapping="Wrap" LineHeight="20" Text="Installs GUARDEX and GUARDEX Browser for this PC. If the .NET 10 Desktop Runtime or the Edge WebView2 runtime is missing, they are downloaded from Microsoft."/>
       <TextBlock Margin="0,8,0,0" Foreground="#8EA088" TextWrapping="Wrap" Text="This does not replace Windows Security and it does not install a disk filter."/>
       <TextBlock x:Name="StepText" Margin="0,18,0,8" Text="Ready to install."/>
       <ProgressBar x:Name="Bar" Minimum="0" Maximum="100" Height="12"/>

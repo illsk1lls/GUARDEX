@@ -18,7 +18,17 @@ static class TrayMark
 			g.Clear(Color.Transparent);
 			var fill = tunnel ? Color.FromArgb(143, 181, 115) : armed ? Color.FromArgb(224, 160, 96) : Color.FromArgb(110, 118, 106);
 			using var brush = new SolidBrush(fill);
-			g.FillEllipse(brush, 4, 4, 24, 24);
+			g.FillPolygon(brush, new[]
+			{
+				new Point(16, 2),
+				new Point(28, 7),
+				new Point(26, 16),
+				new Point(16, 30),
+				new Point(6, 16),
+				new Point(4, 7)
+			});
+			using var bar = new SolidBrush(Color.FromArgb(228, 236, 223));
+			g.FillRectangle(bar, 9, 11, 14, 3);
 		}
 		var handle = bmp.GetHicon();
 		try

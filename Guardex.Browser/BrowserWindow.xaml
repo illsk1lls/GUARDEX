@@ -4,6 +4,7 @@
         xmlns:web="clr-namespace:Guardex"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="GUARDEX Browser"
+        Icon="/guardex-browser.ico"
         Width="1100" Height="780"
         MinWidth="860" MinHeight="520"
         Background="#121611"

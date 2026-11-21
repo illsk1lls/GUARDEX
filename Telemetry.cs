@@ -326,6 +326,7 @@ static class Telemetry
 		dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
 		rule.Name = name;
 		rule.Description = "GUARDEX telemetry block";
+		rule.Grouping = Enforcer.RuleGroup;
 		rule.ApplicationName = path;
 		rule.Action = 0;
 		rule.Direction = 2;

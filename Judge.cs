@@ -152,7 +152,7 @@ sealed class LocalJudge
 			_liveId = id;
 		}
 		var plain = PlainAsk(kind, id);
-		_store.SetAsk(plain, kind, id);
+		_store.SetAsk(plain, kind, id, fact);
 		Noted?.Invoke(new ModelNote(Ready, true, plain));
 		if (!Ready) return;
 		_ = Task.Run(() => Phrase(kind, id, fact));
@@ -161,6 +161,7 @@ sealed class LocalJudge
 	public void Answer(bool yes)
 	{
 		string kind, id;
+		var what = SubjectLead(_store.Copy().AskSubject);
 		lock (_askGate)
 		{
 			kind = _liveKind;
@@ -168,35 +169,36 @@ sealed class LocalJudge
 			_liveKind = "";
 			_liveId = "";
 		}
-		_store.SetAsk("", "", "");
-		if (kind == "client") AnswerClient(id, yes);
+		_store.SetAsk("", "", "", "");
+		var named = what.Length == 0 ? "that" : what;
+		if (kind == "client") AnswerClient(id, yes, named);
 		else if (kind == "host")
 		{
 			if (yes) _store.ApplyHostJudge(id, "benign", "You said this was you.", "watch");
 			else _store.ApplyHostJudge(id, "malicious", "You said this was not you.", "block");
-			_store.Note(yes ? "You said that startup item was you." : "You said that startup item was not you.");
+			_store.Note(yes ? "You said this was you: " + named + "." : "You said this was not you: " + named + ".");
 		}
 		else if (!yes && kind is "launch" or "flow") StopNamed(id);
-		else _store.Note(yes ? "You said that was you. It was left as it is." : "You said that was not you.");
+		else _store.Note(yes ? "You said this was you: " + named + ". It was left as it is." : "You said this was not you: " + named + ".");
 		NextAsk();
 	}
 
-	void AnswerClient(string id, bool yes)
+	void AnswerClient(string id, bool yes, string named)
 	{
 		var client = _store.Client(id);
 		if (client == null)
 		{
-			_store.Note("That source is already gone.");
+			_store.Note("That source is already gone: " + named + ".");
 			return;
 		}
 		if (yes && client.Value.Hard)
 		{
-			_store.Note("That block stays. The rule on it was hard.");
+			_store.Note("That block stays. The rule on " + named + " was hard.");
 			return;
 		}
 		var next = Step(client.Value.Band, yes ? -1 : 1);
 		var label = yes ? "human" : "autonomous_agent";
-		var reason = yes ? "You said this was you." : "You said this was not you.";
+		var reason = yes ? "You said this was you: " + named + "." : "You said this was not you: " + named + ".";
 		_store.ApplyJudge(id, client.Value.Score, label, reason, next);
 		_store.Note(reason);
 		if (next != client.Value.Band) Judged?.Invoke(id);
@@ -234,7 +236,7 @@ sealed class LocalJudge
 			_liveId = next.Id;
 		}
 		var plain = PlainAsk(next.Kind, next.Id);
-		_store.SetAsk(plain, next.Kind, next.Id);
+		_store.SetAsk(plain, next.Kind, next.Id, next.Fact);
 		Noted?.Invoke(new ModelNote(Ready, true, plain));
 		if (Ready) _ = Task.Run(() => Phrase(next.Kind, next.Id, next.Fact));
 	}
@@ -282,6 +284,13 @@ sealed class LocalJudge
 		{
 			_gate.Release();
 		}
+	}
+
+	static string SubjectLead(string subject)
+	{
+		if (string.IsNullOrWhiteSpace(subject)) return "";
+		var line = subject.Split('\n', '\r')[0].Trim();
+		return line.Length > 180 ? line[..180] : line;
 	}
 
 	static string PlainAsk(string kind, string id) => kind switch
@@ -585,6 +594,7 @@ sealed class LocalJudge
 		{
 			_lastAlert = now;
 			_lastAlertText = text;
+			_store.Note(text);
 		}
 		Noted?.Invoke(new ModelNote(false, alert, text));
 	}

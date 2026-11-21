@@ -1,22 +1,36 @@
 # GUARDEX (WIP)
 
-Host defense system for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask the person at the keyboard about suspicious behavior.
+Host defense for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask you what it is looking at, with the actual item on screen.
 
-The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX shows the window. The pages are Traffic, Blocks, Host, and Remote. Web pages and torrents are a separate program, GUARDEX Browser.
+The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX for the window: Traffic, Blocks, Host, Remote, and Log. Web pages and torrents are a separate program, GUARDEX Browser.
 
-A local model can be connected via the flyout or main window.
+A local model connects from the flyout or the main window.
 
 ## Inbound traffic
 
-GUARDEX reads new inbound TCP clients of ports this PC is listening on, and HTTP.sys request lines when the process is elevated. Half-open SYN packets are not counted. Each source is scored into allow, watch, challenge, or block.
+GUARDEX sees new inbound TCP clients on ports this PC is listening on, and HTTP.sys request lines when it is running elevated. Half-open SYN packets are not counted. Each source is scored into allow, watch, challenge, or block.
 
-Pacing and the pause between tries are scored from HTTP requests, and only for a client that does not look like a browser. A sweep is six or more listening ports within two minutes, without one port taking the traffic. A phone loading a page, a device polling one port, or another PC using a few services over the hour is not blocked for that.
+Pacing, and the pause between tries, comes from HTTP requests, and only for a client that does not look like a browser. A sweep is six or more listening ports within two minutes, without one port taking the traffic. A phone loading a page, a device polling one port, or another PC using a few services over the hour is not blocked for that.
 
 A client that gives a known scanner name is blocked, and so is one address asking for several well-known sensitive paths in the same session. One of those paths, or a headless browser name by itself, is not.
 
-A block-band address is added to Windows Firewall when the process is elevated and blocking is on. The first block lasts 10 minutes. The same address coming back after it expires is held for 30 minutes, then 2 hours, then 12. A release or a model step-down clears that count. A day with no new block clears it too. The rule is removed when it expires and when GUARDEX exits. A rule left by a crash is removed the next time GUARDEX starts. Loopback, link-local, multicast, this PC, and the default gateway are not blocked.
+When the process is elevated and blocking is on, a block-band address gets a Windows Firewall rule. The first hold is 10 minutes. If that address comes back after the hold ends, the next holds are 30 minutes, then 2 hours, then 12. Releasing it, or a model step-down, clears the count. A day with no new block clears it too. The rule comes off when the hold ends and when GUARDEX exits. A rule left behind by a crash is removed the next time GUARDEX starts. Loopback, link-local, multicast, this PC, and the default gateway are not blocked.
+
+Every firewall rule GUARDEX adds is grouped under the name GUARDEX, so the uninstaller can find them. Temporary address rules still use a name that starts with `GUARDEX `, and those are the ones removed on exit. Diagnostic program rules use a different name so they stay until you turn telemetry off, or until uninstall removes them.
 
 Set `GUARDEX_ENFORCE` to `0` to report blocks without creating firewall rules.
+
+## Log
+
+The Blocks page only shows what is still active. When a hold expires, or the model steps a soft block down, that row leaves the list. The Log page keeps the line: the address, that the block was lifted, and why. A model timeout is recorded there too, as are the answers you give.
+
+The same lines are written to `%LocalAppData%\Guardex\log.txt` and kept across restarts. The file holds the latest 400 lines.
+
+## Questions
+
+When one new event shows up, GUARDEX asks right away. It does not wait for a score to pile up. The question is yes or no, in the window and in the tray panel. Under the question is the thing it means: for a startup item, the kind, name, location, and command; for a download, the program and who started it; for a new address, the score and why it was noticed. The tray balloon includes that same detail. If the model shortens the question, the detail stays.
+
+Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays either way.
 
 ## Model
 
@@ -31,8 +45,6 @@ $env:GUARDEX_API_KEY = "none"
 If the endpoint returns 401 or 403, a sign-in window offers three modes. None sends no authorization header. API sends a bearer token. Basic (NPM) sends a username and password. Remember on this PC stores that choice for the endpoint.
 
 The model does not run commands. It does not lift a hard signal, such as the canary, a known scanner signature, or several sensitive paths from one address. On a gray or soft block it may move the source one band. On a watch-level startup item it may raise a malicious verdict to block. It does not delete startup items.
-
-When one new event is seen, GUARDEX asks immediately. It does not wait for a score to accumulate. The question is a yes or no, in the window and in the tray panel. Examples are a download left running, a program in Temp or Downloads connecting out, a new startup item, or the first connection from a new address. Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays in place either way.
 
 ## Startup items
 
@@ -68,9 +80,11 @@ A clipboard value that is a wallet address is restored if a different address of
 
 ## Browser
 
-GUARDEX Browser is its own window, with its own tray icon and a desktop shortcut. It is not the Windows default browser, and it does not cover Chrome or Edge. The rest of the PC is not forced through the tunnel. The tray app still guards the machine.
+GUARDEX Browser is its own window, with its own tray icon and a desktop shortcut. The icon is the same shield as GUARDEX, with a light bar so the two are easy to tell apart. It is not the Windows default browser, and it does not cover Chrome or Edge. The rest of the PC is not forced through the tunnel. The tray app still guards the machine.
 
-The tabs sit on the top edge of the window. Back, forward, reload, and the address bar are on the row under them. Find, zoom, print, history, and bookmarks are in the menu. Settings is in that menu too. The browser reopens the tabs from the last session. Downloads go to the Downloads folder and are not opened. A program started from there is still only reported. Passwords are not saved. Extensions, sync, and extra profiles are not included.
+The tabs sit on the top edge of the window. Back, forward, reload, and the address bar are on the row under them. Find, zoom, print, history, and bookmarks are in the menu. Settings is in that menu too, and Ctrl+, opens it. The browser reopens the tabs from the last session. Downloads go to the Downloads folder and are not opened. A program started from there is still only reported. Passwords are not saved. Extensions, sync, and extra profiles are not included.
+
+Favorites can be imported from Chrome, Edge, or Firefox, one browser at a time. If that browser has more than one profile, you pick one profile. Bookmarks you already have stay. Only http and https addresses are kept. The list holds 2000. Import is on the bookmarks page and under Settings, Privacy.
 
 Every page goes through a proxy on this PC. The VPN section of Settings imports a WireGuard or OpenVPN file and turns the tunnel on. While it is on, pages use that tunnel only. If the tunnel drops, pages stop. They do not fall back to the normal network. Turn the tunnel off to browse on this PC's network again. The browser is IPv4. QUIC is off. A site that exists only on IPv6 does not open.
 
@@ -92,6 +106,8 @@ The source does not contain the NuGet packages. `dotnet restore` downloads them.
 | --- | --- | --- |
 | Microsoft.Diagnostics.Tracing.TraceEvent | 3.1.21 | Reads HTTP.sys request lines |
 | Microsoft.Web.WebView2 | 1.0.4314.35 | GUARDEX Browser view |
+| Microsoft.Data.Sqlite | 9.0.1 | Reads a Firefox bookmark database |
+| SQLitePCLRaw.bundle_e_sqlite3 | 3.0.3 | SQLite build used for that read |
 
 ```powershell
 dotnet restore
@@ -107,15 +123,21 @@ Run elevated for firewall rules, the telemetry block, HTTP.sys request paths, an
 
 ## Install
 
-The release file is `GUARDEX-Setup.exe`. It carries its own runtime, so it opens on a machine that does not have .NET 10 yet. It asks for administrator approval, then:
+The release file is `GUARDEX-Setup.exe`. It carries its own runtime, so it opens on a machine that does not have .NET 10 yet. It asks for administrator approval. If GUARDEX is already installed, the window says so and offers Upgrade, Repair, or Replace instead of a blank install. The same version is a repair. An older version is an upgrade. A newer version can still be replaced with this copy. Settings on the account are left in place.
+
+The setup then:
 
 1. Installs the .NET 10 Desktop Runtime from Microsoft when that runtime is missing.
 2. Installs the WebView2 runtime from Microsoft when that runtime is missing.
-3. Copies GUARDEX into `C:\Program Files\GUARDEX`.
+3. Copies GUARDEX, GUARDEX Browser, and the uninstaller into `C:\Program Files\GUARDEX`.
 4. Adds a Start menu shortcut for GUARDEX, and a Start menu shortcut and a desktop shortcut for GUARDEX Browser.
 5. Can start GUARDEX at sign-in.
+6. Creates a code-signing certificate on this PC, trusts it on this PC only, and signs the three programs with it. It is not a public certificate. Uninstall removes it.
+7. Adds GUARDEX to the Windows uninstall list.
 
 The downloads are the official Microsoft links `https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe` and `https://go.microsoft.com/fwlink/p/?LinkId=2124703`.
+
+Uninstall is `GUARDEX-Uninstall.exe`, also listed in Settings, Apps. It removes the programs, shortcuts, and the sign-in task. Two checkboxes are off unless you turn them on. One removes this account's GUARDEX data (tunnel file, filters, browser profile, baseline, saved sign-in, and the log) and puts diagnostic settings back before that folder is deleted. Downloaded files in Downloads\GUARDEX stay. The other removes firewall rules GUARDEX added. The .NET runtime and WebView2 are left installed.
 
 To build that setup on a machine that already has the SDK:
 

@@ -22,7 +22,7 @@ public sealed class SiteVisit
 static class SiteDesk
 {
 	public const int HistoryMax = 400;
-	public const int BookmarkMax = 200;
+	public const int BookmarkMax = 2000;
 	public const int SessionMax = 16;
 
 	public static bool IsPage(string? url)

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <DefaultItemExcludes>$(DefaultItemExcludes);Setup/**;Guardex.Tunnel/**;Guardex.Browser/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Setup/**;Guardex.Tunnel/**;Guardex.Browser/**;Guardex.Uninstall/**</DefaultItemExcludes>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -11,7 +11,12 @@
     <RootNamespace>Guardex</RootNamespace>
     <AssemblyName>Guardex</AssemblyName>
     <ApplicationTitle>GUARDEX</ApplicationTitle>
+    <Version>0.6.0</Version>
+    <ApplicationIcon>assets\guardex.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="assets\guardex.ico" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.21" />
   </ItemGroup>

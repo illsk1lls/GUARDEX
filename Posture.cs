@@ -278,13 +278,23 @@ sealed class PostureWatch
 		}
 		_store.SetFindings(sweep.Findings, sweep.Status);
 		foreach (var finding in sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0 && !prior.ContainsKey(f.Id)).Take(3))
-			_judge.Notice("host", finding.Id, finding.Name + " showed up in startup. " + finding.Why);
+			_judge.Notice("host", finding.Id, HostFact(finding));
 		var batch = sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0).Take(6).ToList();
 		if (batch.Count > 0 && _judge.Ready)
 			_ = Task.Run(() => _judge.ReviewHostAsync(batch, ct));
 		var fresh = sweep.Findings.Where(f => f.Severity == "block" && _announced.Add(f.Id)).ToList();
 		if (fresh.Count == 1) Alerted?.Invoke(fresh[0].Name + ". " + fresh[0].Why);
 		else if (fresh.Count > 1) Alerted?.Invoke(fresh.Count + " start items need a look. First: " + fresh[0].Name + ".");
+	}
+
+	static string HostFact(Finding finding)
+	{
+		var lines = new List<string> { finding.Kind + ": " + finding.Name };
+		if (finding.Location.Length > 0) lines.Add(finding.Location);
+		if (finding.Detail.Length > 0 && !finding.Detail.Equals(finding.Location, StringComparison.OrdinalIgnoreCase))
+			lines.Add(finding.Detail);
+		if (finding.Why.Length > 0) lines.Add(finding.Why);
+		return string.Join("\n", lines);
 	}
 
 	static SweepResult Collect(bool saveBaseline)

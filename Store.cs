@@ -20,6 +20,7 @@ public sealed class SessionStore
 	string _ask = "";
 	string _askAbout = "";
 	string _askId = "";
+	string _askSubject = "";
 	string _remoteStatus = "";
 	bool _stopUnlisted = true;
 	int _generation;
@@ -193,6 +194,7 @@ public sealed class SessionStore
 				Ask = _ask,
 				AskAbout = _askAbout,
 				AskId = _askId,
+				AskSubject = _askSubject,
 				Banner = Join(Join(Join(_launchAlert, _flowAlert), _clipAlert), _remoteAlert),
 				RemoteStatus = _remoteStatus,
 				StopUnlisted = _stopUnlisted,
@@ -206,12 +208,15 @@ public sealed class SessionStore
 	public void Note(string text)
 	{
 		if (string.IsNullOrWhiteSpace(text)) return;
+		text = text.Trim();
+		var at = DateTime.UtcNow;
 		lock (_gate)
 		{
-			_feed.Add(new FeedItem { Utc = DateTime.UtcNow, Text = text.Trim() });
+			_feed.Add(new FeedItem { Utc = at, Text = text });
 			if (_feed.Count > 80) _feed.RemoveRange(0, _feed.Count - 80);
 			_generation++;
 		}
+		Journal.Append(at, text);
 	}
 
 	internal Verdict? CopyVerdict(string src)
@@ -283,12 +288,14 @@ public sealed class SessionStore
 			item.Judge = judge;
 			item.Reason = reason;
 			item.Severity = severity;
+			var planted = rose ? item.Name + " looks planted" : "";
 			if (rose)
 			{
-				_feed.Add(new FeedItem { Utc = DateTime.UtcNow, Text = item.Name + " looks planted" });
+				_feed.Add(new FeedItem { Utc = DateTime.UtcNow, Text = planted });
 				if (_feed.Count > 80) _feed.RemoveRange(0, _feed.Count - 80);
 			}
 			_generation++;
+			if (planted.Length > 0) Journal.Append(DateTime.UtcNow, planted);
 		}
 	}
 
@@ -322,14 +329,18 @@ public sealed class SessionStore
 
 	public void SetClipAlert(string text) => Hold(ref _clipAlert, text);
 
-	public void SetAsk(string text, string about, string id)
+	public void SetAsk(string text, string about, string id) => SetAsk(text, about, id, null);
+
+	public void SetAsk(string text, string about, string id, string? subject)
 	{
 		lock (_gate)
 		{
-			if (_ask == text && _askAbout == about && _askId == id) return;
+			var next = subject ?? _askSubject;
+			if (_ask == text && _askAbout == about && _askId == id && _askSubject == next) return;
 			_ask = text;
 			_askAbout = about;
 			_askId = id;
+			_askSubject = next;
 			_generation++;
 		}
 	}
@@ -447,6 +458,7 @@ public sealed class Dash
 	public string Ask { get; init; } = "";
 	public string AskAbout { get; init; } = "";
 	public string AskId { get; init; } = "";
+	public string AskSubject { get; init; } = "";
 	public string RemoteStatus { get; init; } = "";
 	public bool StopUnlisted { get; init; } = true;
 	public List<BlockRow> Blocks { get; init; } = [];

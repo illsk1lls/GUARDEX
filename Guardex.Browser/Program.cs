@@ -21,7 +21,8 @@ static class Program
 				TunnelCheck(),
 				SocksGate.SelfCheck(),
 				TorrentDesk.SelfCheck(),
-				AdBlock.SelfCheck()
+				AdBlock.SelfCheck(),
+				Guardex.Favorites.SelfCheck()
 			};
 			if (parts.All(part => part == "PASS"))
 			{

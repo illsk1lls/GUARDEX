@@ -192,8 +192,12 @@ sealed class Shell
 			ShowEndpoints();
 			if (!note.Alert || note.Text.Length == 0) return;
 			MessageBeep(0x30);
+			var text = note.Text;
+			var subject = _store.Copy().AskSubject;
+			if (subject.Length > 0 && text == _store.Copy().Ask)
+				text = text + "\n" + subject.Replace("\n", " · ");
 			_icon.BalloonTipTitle = "GUARDEX";
-			_icon.BalloonTipText = note.Text;
+			_icon.BalloonTipText = text.Length <= 220 ? text : text[..220];
 			_icon.BalloonTipIcon = ToolTipIcon.Warning;
 			_icon.ShowBalloonTip(4000);
 		});

@@ -8,6 +8,7 @@ namespace Guardex;
 // Reflex blocks. The model can step a soft block down. It cannot lift a hard signal.
 sealed class Enforcer
 {
+	public const string RuleGroup = "GUARDEX";
 	const string Prefix = "GUARDEX ";
 	readonly SessionStore _store;
 	readonly object _gate = new();
@@ -218,7 +219,7 @@ sealed class Enforcer
 		{
 			try { Remove(RuleName(ip)); } catch { }
 		}
-		_store.Note(ip + " released. " + why);
+		_store.Note(ip + " block lifted. " + why);
 		Publish();
 	}
 
@@ -273,6 +274,7 @@ sealed class Enforcer
 		dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
 		rule.Name = name;
 		rule.Description = "GUARDEX " + scenario;
+		rule.Grouping = RuleGroup;
 		rule.Action = 0;
 		rule.Direction = 1;
 		rule.Enabled = true;
@@ -287,6 +289,16 @@ sealed class Enforcer
 	{
 		dynamic rules = Policy().Rules;
 		rules.Remove(name);
+	}
+
+	// Temporary address rules use the "GUARDEX " name prefix and are removed on exit.
+	// Telemetry rules share RuleGroup so uninstall can find them, and a different name so this sweep leaves them.
+	public static bool TaggedRule(string name, string? group)
+	{
+		if (string.Equals(group, RuleGroup, StringComparison.Ordinal)) return true;
+		if (name.StartsWith(Prefix, StringComparison.Ordinal)) return true;
+		if (name.StartsWith("GUARDEX-Telemetry ", StringComparison.Ordinal)) return true;
+		return false;
 	}
 
 	static void DropOrphans()
@@ -387,6 +399,11 @@ sealed class Enforcer
 		if (NextStrikes(2, false, true) != 3) failures.Add("confirm did not step the strike");
 		if (Minutes(1) != 10 || Minutes(2) != 30 || Minutes(3) != 120 || Minutes(4) != 720)
 			failures.Add("block lengths");
+		if (!TaggedRule("other", RuleGroup)) failures.Add("group tag");
+		if (!TaggedRule("GUARDEX 203.0.113.8", "")) failures.Add("address name");
+		if (!TaggedRule("GUARDEX-Telemetry WerFault.exe", "")) failures.Add("telemetry name");
+		if (TaggedRule("Windows Defender Firewall", "")) failures.Add("stranger rule");
+		if ("GUARDEX-Telemetry ".StartsWith(Prefix, StringComparison.Ordinal)) failures.Add("telemetry would be swept");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 

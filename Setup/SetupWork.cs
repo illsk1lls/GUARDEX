@@ -141,7 +141,158 @@ static class SetupWork
 		link.TargetPath = exe;
 		link.WorkingDirectory = Path.GetDirectoryName(exe)!;
 		link.Description = description;
+		link.IconLocation = exe + ",0";
 		link.Save();
+	}
+
+	public static string ThisVersion()
+	{
+		var version = typeof(SetupWork).Assembly.GetName().Version;
+		if (version == null) return "0.6.0";
+		var patch = version.Build < 0 ? 0 : version.Build;
+		return version.Major + "." + version.Minor + "." + patch;
+	}
+
+	public static string InstalledVersion()
+	{
+		try
+		{
+			using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+			using var key = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GUARDEX");
+			if (key?.GetValue("DisplayVersion") is string listed && listed.Trim().Length > 0)
+				return listed.Trim();
+		}
+		catch { }
+		var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "GUARDEX", "Guardex.exe");
+		if (!File.Exists(exe)) return "";
+		var file = FileVersionInfo.GetVersionInfo(exe).FileVersion ?? "";
+		if (file.Length == 0 || file == "0.0.0.0") return "0.0.0";
+		return file;
+	}
+
+	public static string Relation(string installed, string setup)
+	{
+		if (string.IsNullOrWhiteSpace(installed)) return "install";
+		var cmp = Parts(installed).CompareTo(Parts(setup));
+		if (cmp < 0) return "upgrade";
+		if (cmp > 0) return "replace";
+		return "repair";
+	}
+
+	static (int Major, int Minor, int Patch) Parts(string text)
+	{
+		var bits = text.Split('.', '+', '-', ' ');
+		int At(int i)
+		{
+			if (bits.Length <= i) return 0;
+			var digits = new string(bits[i].TakeWhile(char.IsDigit).ToArray());
+			return int.TryParse(digits, out var n) ? n : 0;
+		}
+		return (At(0), At(1), At(2));
+	}
+
+	public static void StopApps()
+	{
+		foreach (var name in new[] { "Guardex", "GuardexBrowser" })
+		{
+			Process[] found;
+			try { found = Process.GetProcessesByName(name); }
+			catch { continue; }
+			foreach (var proc in found)
+			{
+				try
+				{
+					try { proc.CloseMainWindow(); } catch { }
+					if (!proc.WaitForExit(2500)) proc.Kill(true);
+				}
+				catch { }
+				finally { proc.Dispose(); }
+			}
+		}
+	}
+
+	public static void Register(string dir, string version, string thumbprint)
+	{
+		var uninstall = Path.Combine(dir, "GUARDEX-Uninstall.exe");
+		using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+		using var key = hive.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GUARDEX");
+		key.SetValue("DisplayName", "GUARDEX");
+		key.SetValue("DisplayVersion", version);
+		key.SetValue("Publisher", "GUARDEX");
+		key.SetValue("InstallLocation", dir);
+		key.SetValue("DisplayIcon", Path.Combine(dir, "Guardex.exe"));
+		key.SetValue("UninstallString", "\"" + uninstall + "\"");
+		key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+		key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+		var bytes = DirBytes(dir);
+		key.SetValue("EstimatedSize", (int)Math.Min(int.MaxValue, bytes / 1024), RegistryValueKind.DWord);
+		if (thumbprint.Length > 0) key.SetValue("GuardexCert", thumbprint);
+	}
+
+	static long DirBytes(string dir)
+	{
+		long total = 0;
+		try
+		{
+			foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+			{
+				try { total += new FileInfo(file).Length; } catch { }
+			}
+		}
+		catch { }
+		return total;
+	}
+
+	public static string SignInstalled(string dir)
+	{
+		var script = Path.Combine(Path.GetTempPath(), "guardex-sign-" + Guid.NewGuid().ToString("n") + ".ps1");
+		File.WriteAllText(script, """
+			$ErrorActionPreference = 'Stop'
+			$dir = $args[0]
+			$cert = Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert | Where-Object { $_.Subject -eq 'CN=GUARDEX' } | Sort-Object NotAfter -Descending | Select-Object -First 1
+			if (-not $cert) {
+			  $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=GUARDEX' -CertStoreLocation Cert:\LocalMachine\My -HashAlgorithm SHA256 -KeyAlgorithm RSA -KeyLength 2048 -NotAfter (Get-Date).AddYears(5)
+			}
+			foreach ($name in @('TrustedPublisher','Root')) {
+			  $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($name, 'LocalMachine')
+			  $store.Open('ReadWrite')
+			  $store.Add($cert)
+			  $store.Close()
+			}
+			foreach ($file in @('Guardex.exe','GuardexBrowser.exe','GUARDEX-Uninstall.exe')) {
+			  $path = Join-Path $dir $file
+			  if (Test-Path $path) { Set-AuthenticodeSignature -FilePath $path -Certificate $cert -HashAlgorithm SHA256 | Out-Null }
+			}
+			Write-Output $cert.Thumbprint
+			""");
+		try
+		{
+			using var proc = Process.Start(new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" \"" + dir + "\"")
+			{
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			});
+			if (proc == null) return "";
+			var output = proc.StandardOutput.ReadToEnd();
+			proc.WaitForExit(60000);
+			if (proc.ExitCode != 0) return "";
+			foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			{
+				var thumb = line.Replace(" ", "");
+				if (thumb.Length == 40 && thumb.All(Uri.IsHexDigit)) return thumb.ToUpperInvariant();
+			}
+			return "";
+		}
+		catch
+		{
+			return "";
+		}
+		finally
+		{
+			try { File.Delete(script); } catch { }
+		}
 	}
 
 	public static void SignInTask(string exe, bool enabled)

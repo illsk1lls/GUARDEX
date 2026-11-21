@@ -680,26 +680,26 @@ public partial class SiteBrowser : UserControl
 		MenuPane.Visibility = _menuOpen ? Visibility.Visible : Visibility.Collapsed;
 		DownloadPane.Visibility = _downloadsOpen ? Visibility.Visible : Visibility.Collapsed;
 		DownloadsColumn.Width = new GridLength(_downloadsOpen ? 380 : 0);
+		var url = core?.Source ?? "";
+		var blank = !SiteDesk.IsPage(url);
+		HistoryPane.Visibility = _settingsOpen ? Visibility.Collapsed : blank || _historyOpen ? Visibility.Visible : Visibility.Collapsed;
 		ApplyViews(false);
 		BackButton.IsEnabled = core?.CanGoBack == true;
 		ForwardButton.IsEnabled = core?.CanGoForward == true;
 		var loading = tab?.Loading == true;
 		ReloadButton.Content = loading ? "\uE711" : "\uE72C";
 		ReloadButton.ToolTip = loading ? "Stop" : "Reload";
-		var url = core?.Source ?? "";
 		if (!Address.IsKeyboardFocusWithin)
 			Address.Text = SiteDesk.IsPage(url) ? url : "";
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
 		StarButton.Content = SiteDesk.IsMarked(_bookmarks, url) ? "\uE735" : "\uE734";
 		PaintZoom();
-		var blank = !SiteDesk.IsPage(url);
-		HistoryPane.Visibility = _settingsOpen ? Visibility.Collapsed : blank || _historyOpen ? Visibility.Visible : Visibility.Collapsed;
 		PaintCalls();
 	}
 
 	void ApplyViews(bool showPage)
 	{
-		var hide = _settingsOpen && !showPage;
+		var hide = !showPage && (_settingsOpen || HistoryPane.Visibility == Visibility.Visible);
 		ViewHost.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
 		foreach (var item in _tabs)
 			item.View.Visibility = !hide && item.Selected ? Visibility.Visible : Visibility.Collapsed;
@@ -1193,6 +1193,77 @@ public partial class SiteBrowser : UserControl
 		SaveBookmarks();
 		FillLists();
 		PaintChrome();
+	}
+
+	void OnImportBrowser(object sender, RoutedEventArgs e)
+	{
+		if (sender is not Button button || button.Tag is not string browser) return;
+		BookmarkImportChoices.Children.Clear();
+		SettingsImportChoices.Children.Clear();
+		IReadOnlyList<FavoriteProfile> profiles;
+		try { profiles = Favorites.Profiles(browser); }
+		catch
+		{
+			SetImport(Favorites.Missing(browser));
+			return;
+		}
+		if (profiles.Count == 0)
+		{
+			SetImport(Favorites.Missing(browser));
+			return;
+		}
+		if (profiles.Count == 1)
+		{
+			ImportOne(profiles[0]);
+			return;
+		}
+		SetImport("Choose one " + Favorites.Label(browser) + " profile.");
+		foreach (var profile in profiles)
+		{
+			BookmarkImportChoices.Children.Add(ProfileButton(profile));
+			SettingsImportChoices.Children.Add(ProfileButton(profile));
+		}
+	}
+
+	Button ProfileButton(FavoriteProfile profile)
+	{
+		var pick = new Button
+		{
+			Content = profile.Name,
+			Tag = profile,
+			Margin = new Thickness(0, 0, 8, 8),
+			Padding = new Thickness(12, 6, 12, 6)
+		};
+		pick.Click += (_, _) => ImportOne(profile);
+		return pick;
+	}
+
+	void ImportOne(FavoriteProfile profile)
+	{
+		BookmarkImportChoices.Children.Clear();
+		SettingsImportChoices.Children.Clear();
+		try
+		{
+			var incoming = Favorites.Read(profile);
+			var merged = Favorites.Merge(_bookmarks, incoming);
+			SaveBookmarks();
+			FillLists();
+			PaintChrome();
+			var text = "Imported " + merged.Added + " from " + Favorites.Label(profile.Browser) + " (" + profile.Name + ").";
+			if (merged.Already > 0) text += " " + merged.Already + " were already bookmarked.";
+			if (merged.Full) text += " The bookmark list is full.";
+			SetImport(text);
+		}
+		catch
+		{
+			SetImport("That " + Favorites.Label(profile.Browser) + " profile could not be read.");
+		}
+	}
+
+	void SetImport(string text)
+	{
+		BookmarkImportStatus.Text = text;
+		SettingsImportStatus.Text = text;
 	}
 
 	void OnCancelDownload(object sender, RoutedEventArgs e)

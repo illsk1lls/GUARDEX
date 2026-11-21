@@ -6,10 +6,37 @@ namespace Guardex.Setup;
 public partial class SetupWindow : Window
 {
 	bool _busy;
+	string _relation = "install";
 
 	public SetupWindow()
 	{
 		InitializeComponent();
+		Loaded += (_, _) => Prepare();
+	}
+
+	void Prepare()
+	{
+		var installed = SetupWork.InstalledVersion();
+		var mine = SetupWork.ThisVersion();
+		_relation = SetupWork.Relation(installed, mine);
+		if (_relation == "upgrade")
+		{
+			Intro.Text = "GUARDEX " + installed + " is installed. This setup is " + mine + ", so it can upgrade in place. Settings on this account stay. If the .NET 10 Desktop Runtime or the Edge WebView2 runtime is missing, they are downloaded from Microsoft.";
+			InstallButton.Content = "Upgrade";
+			StepText.Text = "Ready to upgrade.";
+		}
+		else if (_relation == "repair")
+		{
+			Intro.Text = "GUARDEX " + mine + " is already installed. Running setup again replaces the program files, shortcuts, and uninstall entry. Settings on this account stay.";
+			InstallButton.Content = "Repair";
+			StepText.Text = "Ready to repair.";
+		}
+		else if (_relation == "replace")
+		{
+			Intro.Text = "GUARDEX " + installed + " is already installed, and it is newer than this setup (" + mine + "). You can still replace those files with this copy. Settings on this account stay.";
+			InstallButton.Content = "Replace";
+			StepText.Text = "Ready to replace the newer copy.";
+		}
 	}
 
 	void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -29,7 +56,13 @@ public partial class SetupWindow : Window
 		try
 		{
 			await Install(SignInBox.IsChecked == true);
-			StepText.Text = "GUARDEX is installed.";
+			StepText.Text = _relation switch
+			{
+				"upgrade" => "GUARDEX is upgraded.",
+				"repair" => "GUARDEX is repaired.",
+				"replace" => "GUARDEX was replaced with this copy.",
+				_ => "GUARDEX is installed."
+			};
 			Bar.Value = 100;
 			InstallButton.Content = "Close";
 			InstallButton.IsEnabled = true;
@@ -96,7 +129,8 @@ public partial class SetupWindow : Window
 		if (!SetupWork.HasPayload())
 			throw new InvalidOperationException("This setup file does not contain GUARDEX. Build it with build-release.ps1.");
 
-		Report(72, "Copying GUARDEX into Program Files.");
+		Report(72, "Closing a running copy, then copying GUARDEX into Program Files.");
+		SetupWork.StopApps();
 		var dest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "GUARDEX");
 		var exe = Path.Combine(dest, "Guardex.exe");
 		try
@@ -116,8 +150,12 @@ public partial class SetupWindow : Window
 		if (!File.Exists(browser))
 			throw new InvalidOperationException("GuardexBrowser.exe was not in the package.");
 		SetupWork.BrowserLinks(browser);
-		Report(94, signIn ? "Setting GUARDEX to start at sign-in." : "Leaving startup unchanged.");
+		Report(92, signIn ? "Setting GUARDEX to start at sign-in." : "Leaving startup unchanged.");
 		SetupWork.SignInTask(exe, signIn);
+		Report(95, "Signing the programs for this PC.");
+		var thumb = SetupWork.SignInstalled(dest);
+		Report(97, "Adding GUARDEX to the Windows uninstall list.");
+		SetupWork.Register(dest, SetupWork.ThisVersion(), thumb);
 
 		Report(98, "Starting GUARDEX.");
 		if (System.Diagnostics.Process.GetProcessesByName("Guardex").Length == 0)

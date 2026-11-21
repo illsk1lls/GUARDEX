@@ -7,7 +7,7 @@ static class Program
 	{
 		if (args.Contains("--check"))
 		{
-			var parts = new[] { Scorer.SelfCheck(), PostureRules.SelfCheck(), RemoteCatalog.SelfCheck(), Enforcer.SelfCheck(), LaunchRules.SelfCheck(), ClipRules.SelfCheck(), ProcList.SelfCheck(), ModelNames.SelfCheck(), Telemetry.SelfCheck() };
+			var parts = new[] { Scorer.SelfCheck(), PostureRules.SelfCheck(), RemoteCatalog.SelfCheck(), Enforcer.SelfCheck(), LaunchRules.SelfCheck(), ClipRules.SelfCheck(), ProcList.SelfCheck(), ModelNames.SelfCheck(), Telemetry.SelfCheck(), Journal.SelfCheck() };
 			if (parts.All(p => p == "PASS"))
 			{
 				Console.WriteLine("PASS");
@@ -21,6 +21,12 @@ static class Program
 		{
 			foreach (var line in PostureWatch.Inspect())
 				Console.WriteLine(line);
+			return 0;
+		}
+
+		if (args.Contains("--telemetry-off"))
+		{
+			Console.WriteLine(Telemetry.Apply(false));
 			return 0;
 		}
 

@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="GUARDEX"
+        Icon="pack://application:,,,/assets/guardex.ico"
         Width="1040" Height="720"
         MinWidth="840" MinHeight="560"
         Background="#121611"
@@ -145,7 +146,10 @@
             <Button Content="Yes" Click="OnAskYes" Margin="0,0,8,0"/>
             <Button Content="No" Click="OnAskNo"/>
           </StackPanel>
-          <TextBlock x:Name="AskText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+          <StackPanel>
+            <TextBlock x:Name="AskText" TextWrapping="Wrap"/>
+            <TextBlock x:Name="AskSubject" TextWrapping="Wrap" Foreground="#8EA088" FontFamily="Consolas" FontSize="12" Margin="0,4,0,0"/>
+          </StackPanel>
         </DockPanel>
       </Border>
       <DockPanel Margin="0,8,0,0" LastChildFill="True">
@@ -162,7 +166,8 @@
       <Button x:Name="NavTraffic" Content="Traffic" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavBlocks" Content="Blocks" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavHost" Content="Host" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
-      <Button x:Name="NavRemote" Content="Remote" Click="OnNav" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavRemote" Content="Remote" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavLog" Content="Log" Click="OnNav" HorizontalContentAlignment="Left"/>
     </StackPanel>
 
     <Grid Margin="0,0,18,18">
@@ -227,7 +232,7 @@
       </Grid.ColumnDefinitions>
       <DockPanel Grid.Column="0">
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
-                   Text="A block lasts a short time, then longer if the source comes back. Rules clear when GUARDEX exits."/>
+                   Text="A block lasts a short time, then longer if the source comes back. When it ends, it leaves this list. The Log page keeps that it happened."/>
         <ListBox x:Name="Blocks" SelectionChanged="OnBlockSelect">
           <ListBox.ItemTemplate>
             <DataTemplate>
@@ -302,6 +307,15 @@
           <TextBox x:Name="HostDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
         </DockPanel>
       </Grid>
+    </Grid>
+
+    <Grid x:Name="LogPage" Visibility="Collapsed">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
+                   Text="Events stay here after they leave the other pages. A block that expires, a model timeout, and an answer you gave are kept on this PC."/>
+        <TextBox x:Name="LogBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap"
+                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+      </DockPanel>
     </Grid>
 
     <Grid x:Name="RemotePage" Visibility="Collapsed">

@@ -29,6 +29,8 @@ public partial class FlyoutWindow : Window
 		Knob.HorizontalAlignment = on ? System.Windows.HorizontalAlignment.Right : System.Windows.HorizontalAlignment.Left;
 		AskRow.Visibility = dash.Ask.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		AskText.Text = dash.Ask;
+		AskSubject.Text = dash.AskSubject;
+		AskSubject.Visibility = dash.AskSubject.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		if (dash.Banner.Length > 0)
 		{
 			Hint.Text = dash.Banner;
