@@ -6,6 +6,8 @@ $artifacts = Join-Path $root "artifacts"
 if (Test-Path $appOut) { Remove-Item -Recurse -Force $appOut }
 dotnet publish (Join-Path $root "Guardex.csproj") -c Release -r win-x64 --self-contained false -o $appOut
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+dotnet publish (Join-Path $root "Guardex.Browser\Guardex.Browser.csproj") -c Release -r win-x64 --self-contained false -o $appOut
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $zip = Join-Path $root "Setup\payload.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path (Join-Path $appOut "*") -DestinationPath $zip

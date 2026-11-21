@@ -1,0 +1,32 @@
+<Window x:Class="Guardex.Browser.BrowserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:web="clr-namespace:Guardex"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="GUARDEX Browser"
+        Width="1100" Height="780"
+        MinWidth="860" MinHeight="520"
+        Background="#121611"
+        Foreground="#E4ECDF"
+        FontFamily="Segoe UI"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
+        Closing="OnClosing">
+  <Window.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+      <Style TargetType="ListBox">
+        <Setter Property="Background" Value="#121611"/>
+        <Setter Property="Foreground" Value="#E4ECDF"/>
+        <Setter Property="BorderBrush" Value="#2C3828"/>
+      </Style>
+    </ResourceDictionary>
+  </Window.Resources>
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <web:SiteBrowser x:Name="Pages"/>
+</Window>

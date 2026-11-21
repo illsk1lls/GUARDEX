@@ -9,7 +9,7 @@
     <AssemblyName>GUARDEX-Setup</AssemblyName>
     <RootNamespace>Guardex.Setup</RootNamespace>
     <ApplicationTitle>GUARDEX Setup</ApplicationTitle>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>

@@ -70,7 +70,10 @@ sealed class Shell
 		_window.StopUnlistedRequested += on => _remote.SetStopEnabled(on);
 		_window.AskAnswered += yes => _judge.Answer(yes);
 		_flyout.AskAnswered += yes => _judge.Answer(yes);
+		_window.TelemetryRequested += QueueTelemetry;
 		_enforcer.Start();
+		_window.SetTelemetry(Telemetry.Wanted(), Telemetry.Wanted() ? "Checking the telemetry block." : "Telemetry blocking is off.", Telemetry.Wanted());
+		if (Telemetry.Wanted()) QueueTelemetry(true);
 		_remote.Start();
 		_launch.Start();
 		_clip.Hook();
@@ -193,6 +196,17 @@ sealed class Shell
 			_icon.BalloonTipText = note.Text;
 			_icon.BalloonTipIcon = ToolTipIcon.Warning;
 			_icon.ShowBalloonTip(4000);
+		});
+	}
+
+	void QueueTelemetry(bool on)
+	{
+		Task.Run(() =>
+		{
+			string status;
+			try { status = Telemetry.Apply(on); }
+			catch (Exception ex) { status = ex.Message; }
+			System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => _window.SetTelemetry(Telemetry.Wanted(), status));
 		});
 	}
 

@@ -35,6 +35,9 @@ public partial class MainWindow : Window
 	public event Action? AllowNoneRequested;
 	public event Action<bool>? StopUnlistedRequested;
 	public event Action<bool>? AskAnswered;
+	public event Action<bool>? TelemetryRequested;
+	bool _telemetryOn = true;
+	bool _telemetryBusy;
 
 	public MainWindow(SessionStore store)
 	{
@@ -171,13 +174,12 @@ public partial class MainWindow : Window
 
 	void PaintNav()
 	{
-		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote, NavSite })
+		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote })
 		{
 			var on = button == NavTraffic && _page == "traffic"
 				|| button == NavBlocks && _page == "blocks"
 				|| button == NavHost && _page == "host"
-				|| button == NavRemote && _page == "remote"
-				|| button == NavSite && _page == "site";
+				|| button == NavRemote && _page == "remote";
 			button.Background = on ? _navOn : _navOff;
 		}
 	}
@@ -189,8 +191,6 @@ public partial class MainWindow : Window
 		BlocksPage.Visibility = page == "blocks" ? Visibility.Visible : Visibility.Collapsed;
 		HostPage.Visibility = page == "host" ? Visibility.Visible : Visibility.Collapsed;
 		RemotePage.Visibility = page == "remote" ? Visibility.Visible : Visibility.Collapsed;
-		SitePage.Visibility = page == "site" ? Visibility.Visible : Visibility.Collapsed;
-		if (page == "site") SitePage.Wake();
 		PaintNav();
 	}
 
@@ -253,8 +253,24 @@ public partial class MainWindow : Window
 		if (sender == NavBlocks) Show("blocks");
 		else if (sender == NavHost) Show("host");
 		else if (sender == NavRemote) Show("remote");
-		else if (sender == NavSite) Show("site");
 		else Show("traffic");
+	}
+
+	public void SetTelemetry(bool on, string status, bool busy = false)
+	{
+		_telemetryOn = on;
+		_telemetryBusy = busy;
+		TelemetryButton.IsEnabled = !busy;
+		TelemetryButton.Content = on ? "Turn off" : "Turn on";
+		TelemetryStatus.Text = status;
+	}
+
+	void OnTelemetry(object sender, RoutedEventArgs e)
+	{
+		if (_telemetryBusy) return;
+		var on = !_telemetryOn;
+		SetTelemetry(on, on ? "Applying the telemetry block." : "Removing the telemetry block.", true);
+		TelemetryRequested?.Invoke(on);
 	}
 
 	void OnAskYes(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(true);

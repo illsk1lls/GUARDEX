@@ -1,0 +1,452 @@
+<UserControl x:Class="Guardex.SiteBrowser"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+             Background="#121611" Focusable="True">
+  <UserControl.Resources>
+    <Style x:Key="IconButton" TargetType="Button">
+      <Setter Property="Width" Value="36"/>
+      <Setter Property="Height" Value="36"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#273222"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.35"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CaptionButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+      <Setter Property="Width" Value="46"/>
+      <Setter Property="Height" Value="40"/>
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="Transparent">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#273222"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CloseCaption" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="Transparent">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#6B3030"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="MenuItem" TargetType="Button">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="6">
+              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#273222"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="NavItem" TargetType="Button" BasedOn="{StaticResource MenuItem}">
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Padding" Value="12,10"/>
+      <Setter Property="Margin" Value="0,1"/>
+    </Style>
+    <Style x:Key="Omnibox" TargetType="TextBox">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#E4ECDF"/>
+      <Setter Property="CaretBrush" Value="#E4ECDF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="SelectionBrush" Value="#3F6B45"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="14,0,40,0" VerticalAlignment="Center"/>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </UserControl.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="40"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <DockPanel x:Name="TabRow" Grid.Row="0" LastChildFill="True" Background="#0C100B">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize"/>
+        <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximize"/>
+        <Button Style="{StaticResource CloseCaption}" Content="&#xE8BB;" Click="OnWindowClose" ToolTip="Close"/>
+      </StackPanel>
+      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="6,6,0,0">
+        <StackPanel Orientation="Horizontal">
+          <ItemsControl x:Name="TabList">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border x:Name="Bd" Background="Transparent" CornerRadius="8,8,0,0" Margin="0,0,2,0" Padding="10,0,2,0"
+                        MouseLeftButtonDown="OnTabDown" MouseDown="OnTabMouse"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                  <DockPanel Width="180" Height="34">
+                    <Button DockPanel.Dock="Right" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="8"
+                            Width="22" Height="22" Padding="0" Margin="4,0,2,0" ToolTip="Close tab"
+                            Style="{StaticResource IconButton}" Click="OnCloseTab" Tag="{Binding}"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                  </DockPanel>
+                </Border>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding Selected}" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="#121611"/>
+                  </DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <Button x:Name="NewTabButton" Style="{StaticResource IconButton}" Content="&#xE710;" FontSize="12"
+                  ToolTip="New tab" Click="OnNewTab" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+        </StackPanel>
+      </ScrollViewer>
+    </DockPanel>
+
+    <Grid x:Name="ToolRow" Grid.Row="1" Margin="6,4,6,4" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Button x:Name="BackButton" Style="{StaticResource IconButton}" Content="&#xE72B;" ToolTip="Back" Click="OnBack"/>
+        <Button x:Name="ForwardButton" Style="{StaticResource IconButton}" Content="&#xE72A;" ToolTip="Forward" Click="OnForward"/>
+        <Button x:Name="ReloadButton" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="Reload" Click="OnReload"/>
+      </StackPanel>
+      <Grid Grid.Column="1" Margin="4,0">
+        <Border Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="18" Height="36"/>
+        <TextBox x:Name="Address" Style="{StaticResource Omnibox}" Height="36"
+                 VerticalContentAlignment="Center" KeyDown="OnAddressKey" TextChanged="OnAddressChanged"
+                 GotFocus="OnAddressFocus" LostFocus="OnAddressFocus"/>
+        <TextBlock x:Name="AddressHint" Text="Enter a site" Foreground="#8EA088" Margin="16,0,0,0"
+                   VerticalAlignment="Center" IsHitTestVisible="False"/>
+        <Button x:Name="StarButton" Style="{StaticResource IconButton}" Content="&#xE734;" HorizontalAlignment="Right"
+                Margin="0,0,2,0" ToolTip="Bookmark this page" Click="OnStar"/>
+      </Grid>
+      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+        <Button x:Name="DownloadsButton" Style="{StaticResource IconButton}" Content="&#xE896;" ToolTip="Downloads" Click="OnDownloadsToggle"/>
+        <Button x:Name="MenuButton" Style="{StaticResource IconButton}" Content="&#xE712;" ToolTip="Menu" Click="OnMenu"/>
+      </StackPanel>
+    </Grid>
+
+    <DockPanel x:Name="FindBar" Grid.Row="2" Visibility="Collapsed" Margin="8,0,8,6" LastChildFill="True">
+      <Button DockPanel.Dock="Right" Content="Close" Margin="8,0,0,0" Click="OnFindClose"/>
+      <Button DockPanel.Dock="Right" Content="Previous" Margin="8,0,0,0" Click="OnFindPrevious"/>
+      <Button DockPanel.Dock="Right" Content="Next" Margin="8,0,0,0" Click="OnFindNext"/>
+      <TextBlock x:Name="FindCount" DockPanel.Dock="Right" Foreground="#8EA088" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="72"/>
+      <TextBox x:Name="FindBox" Height="32" VerticalContentAlignment="Center" KeyDown="OnFindKey" TextChanged="OnFindChanged"/>
+    </DockPanel>
+
+    <Border x:Name="AskBar" Grid.Row="3" Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="0,1,0,1" Padding="12,8">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBox x:Name="AskPhrase" Width="280" Height="32" Margin="8,0,0,0" Visibility="Collapsed"/>
+          <Button x:Name="AskOpen" Content="Open" Margin="8,0,0,0" Click="OnAskOpen"/>
+          <Button x:Name="AskSave" Content="Save" Margin="8,0,0,0" Click="OnAskSave" Visibility="Collapsed"/>
+          <Button Content="Cancel" Margin="8,0,0,0" Click="OnAskCancel"/>
+        </StackPanel>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="AskText" TextWrapping="Wrap"/>
+          <TextBlock x:Name="AskHint" Foreground="#8EA088" TextWrapping="Wrap" Visibility="Collapsed"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border x:Name="MenuPane" Grid.Row="4" HorizontalAlignment="Right" Margin="0,0,8,6" Width="260"
+            Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="10" Padding="6"
+            shell:WindowChrome.IsHitTestVisibleInChrome="True">
+      <StackPanel>
+        <Button Style="{StaticResource MenuItem}" Content="New tab" Click="OnNewTab"/>
+        <Button Style="{StaticResource MenuItem}" Content="History and bookmarks" Click="OnHistoryToggle"/>
+        <Button Style="{StaticResource MenuItem}" Content="Downloads" Click="OnDownloadsToggle"/>
+        <Button Style="{StaticResource MenuItem}" Content="Find" Click="OnFindToggle"/>
+        <Button Style="{StaticResource MenuItem}" Content="Print" Click="OnPrint"/>
+        <Border Height="1" Background="#2C3828" Margin="8,4"/>
+        <DockPanel Margin="12,4">
+          <TextBlock VerticalAlignment="Center" Text="Zoom"/>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button Style="{StaticResource IconButton}" Width="28" Height="28" Content="&#xE71F;" FontSize="12" ToolTip="Zoom out" Click="OnZoomOut"/>
+            <TextBlock x:Name="MenuZoom" Width="48" VerticalAlignment="Center" TextAlignment="Center" Foreground="#8EA088" Text="100%"/>
+            <Button Style="{StaticResource IconButton}" Width="28" Height="28" Content="&#xE8A3;" FontSize="12" ToolTip="Zoom in" Click="OnZoomIn"/>
+          </StackPanel>
+        </DockPanel>
+        <Border Height="1" Background="#2C3828" Margin="8,4"/>
+        <Button Style="{StaticResource MenuItem}" Content="Calls" Click="OnCallsToggle"/>
+        <Button Style="{StaticResource MenuItem}" Content="Settings" Click="OnOpenSettings"/>
+      </StackPanel>
+    </Border>
+
+    <Grid Grid.Row="5">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition x:Name="CallsColumn" Width="0"/>
+        <ColumnDefinition x:Name="DownloadsColumn" Width="0"/>
+      </Grid.ColumnDefinitions>
+      <Grid Grid.Column="0">
+        <Grid x:Name="ViewHost"/>
+        <Grid x:Name="HistoryPane" Background="#121611">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <DockPanel Margin="16,12,16,4">
+            <Button DockPanel.Dock="Right" Content="Clear" Click="OnClearBookmarks" Margin="8,0,0,0"/>
+            <TextBlock Text="Bookmarks" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <ListBox x:Name="BookmarkList" Grid.Row="1" Margin="16,0,16,8" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,4">
+                  <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock Text="{Binding Url}" Foreground="#8EA088" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <DockPanel Grid.Row="2" Margin="16,4,16,4">
+            <Button DockPanel.Dock="Right" Content="Clear" Click="OnClearHistory" Margin="8,0,0,0"/>
+            <TextBlock Text="History" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <ListBox x:Name="HistoryList" Grid.Row="3" Margin="16,0,16,12" BorderThickness="0" Background="Transparent" MouseDoubleClick="OnVisitOpen">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <DockPanel Margin="0,4">
+                  <TextBlock DockPanel.Dock="Right" Text="{Binding When}" Foreground="#8EA088" Margin="8,0,0,0"/>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Url}" Foreground="#8EA088" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+        <Border x:Name="HoverChip" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8" Padding="8,4"
+                Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="4" Visibility="Collapsed">
+          <TextBlock x:Name="StatusLeft" Foreground="#E4ECDF" MaxWidth="520" TextTrimming="CharacterEllipsis"/>
+        </Border>
+      </Grid>
+      <Border x:Name="CallsPane" Grid.Column="1" Background="#121611" BorderBrush="#2C3828" BorderThickness="1,0,0,0" Padding="12,8,8,8" Visibility="Collapsed">
+        <DockPanel>
+          <TextBlock x:Name="CallsSummary" DockPanel.Dock="Top" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8" Text="No page open."/>
+          <ListBox x:Name="CallList" BorderThickness="0" Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,4">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding Band}" FontFamily="Consolas">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Foreground" Value="#E0C080"/>
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding Band}" Value="block">
+                              <Setter Property="Foreground" Value="#E0A0A0"/>
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding Kind}" Foreground="#8EA088" FontFamily="Consolas" Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding Host}" FontFamily="Consolas"/>
+                  </DockPanel>
+                  <TextBlock Text="{Binding Path}" Foreground="#8EA088" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding Why}" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+
+      <Grid x:Name="SettingsPage" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#121611">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="220"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Border Background="#0C100B">
+          <StackPanel Margin="12,18,12,12">
+            <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold" Margin="12,0,0,14"/>
+            <Button x:Name="NavGeneral" Style="{StaticResource NavItem}" Content="General" Tag="general" Click="OnSettingsNav"/>
+            <Button x:Name="NavDownloads" Style="{StaticResource NavItem}" Content="Downloads" Tag="downloads" Click="OnSettingsNav"/>
+            <Button x:Name="NavVpn" Style="{StaticResource NavItem}" Content="VPN" Tag="vpn" Click="OnSettingsNav"/>
+            <Button x:Name="NavPrivacy" Style="{StaticResource NavItem}" Content="Privacy" Tag="privacy" Click="OnSettingsNav"/>
+          </StackPanel>
+        </Border>
+        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="32,24,32,32" MaxWidth="640" HorizontalAlignment="Left">
+            <StackPanel x:Name="PageGeneral">
+              <TextBlock Text="General" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
+              <TextBlock Text="On startup" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="GUARDEX Browser opens the tabs from the last session."/>
+              <TextBlock Text="New tab" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="A new tab shows bookmarks and history. This is not the Windows default browser."/>
+              <TextBlock Text="Page zoom" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <StackPanel Orientation="Horizontal">
+                <Button Content="&#xE71F;" FontFamily="Segoe MDL2 Assets" Width="36" Height="32" Padding="0" ToolTip="Zoom out" Click="OnZoomOut"/>
+                <TextBlock x:Name="SettingsZoom" Text="100%" Width="56" VerticalAlignment="Center" TextAlignment="Center" Foreground="#8EA088"/>
+                <Button Content="&#xE8A3;" FontFamily="Segoe MDL2 Assets" Width="36" Height="32" Padding="0" ToolTip="Zoom in" Click="OnZoomIn"/>
+                <Button Content="Reset" Margin="8,0,0,0" Click="OnZoomReset"/>
+              </StackPanel>
+            </StackPanel>
+            <StackPanel x:Name="PageDownloads" Visibility="Collapsed">
+              <TextBlock Text="Downloads" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
+              <TextBlock Text="Save files to" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock x:Name="DownloadFolderText" Margin="0,4,0,8" TextWrapping="Wrap"/>
+              <TextBlock Margin="0,0,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Files are saved and not opened. A program started from that folder is still only reported."/>
+              <TextBlock Text="Magnets and torrent files" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="A magnet link asks before it opens. A .torrent file asks whether to open it or save it. An opened torrent uses the same download progress as any other file."/>
+              <TextBlock Text="Opened torrents save their files to" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock x:Name="TorrentFolderText" Margin="0,4,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel x:Name="PageVpn" Visibility="Collapsed">
+              <TextBlock Text="VPN" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
+              <TextBlock x:Name="TunnelStatus" TextWrapping="Wrap" Margin="0,0,0,8"/>
+              <TextBlock Margin="0,0,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="While the tunnel is on, pages in this window use it only. If it drops, they stop. Turn it off to browse on this PC's network. Chrome, Edge, and the rest of the PC are not in the tunnel."/>
+              <StackPanel Orientation="Horizontal">
+                <Button x:Name="TunnelButton" Content="Turn on" MinWidth="108" Click="OnTunnelToggle"/>
+                <Button x:Name="ImportButton" Content="Import" Margin="8,0,0,0" Click="OnTunnelImport"/>
+              </StackPanel>
+            </StackPanel>
+            <StackPanel x:Name="PagePrivacy" Visibility="Collapsed">
+              <TextBlock Text="Privacy" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
+              <TextBlock Text="Ads and trackers" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock x:Name="AdStatus" Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap" Text="Loading filter lists."/>
+              <Button x:Name="AdButton" Content="Turn off" HorizontalAlignment="Left" Margin="0,0,0,8" Click="OnAdToggle"/>
+              <TextBlock Margin="0,0,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="EasyList and EasyPrivacy. The page you open is not blocked. Ads, trackers, and third-party frames are. Lists are saved on this PC and refresh about every four days. While the tunnel is on, an update uses the tunnel. If the tunnel is down, the saved lists stay."/>
+              <TextBlock Text="Passwords" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Passwords and autofill stay off. This browser does not use your signed-in Edge or Chrome profile."/>
+              <TextBlock Text="History and bookmarks" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                <Button Content="Clear history" Click="OnClearHistory"/>
+                <Button Content="Clear bookmarks" Margin="8,0,0,0" Click="OnClearBookmarks"/>
+              </StackPanel>
+              <TextBlock Text="Calls" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Calls the open tab makes are labels. They do not block the request. Form data and response bodies are not read."/>
+              <Button Content="Show calls" HorizontalAlignment="Left" Click="OnCallsToggle"/>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+
+      <Border x:Name="DownloadPane" Grid.Column="2" Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1,0,0,0" Padding="12">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right" Content="Show folder" Click="OnOpenDownloadsFolder"/>
+            <TextBlock Text="Downloads" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <TextBlock x:Name="DownloadEmpty" DockPanel.Dock="Top" Foreground="#8EA088" Text="No downloads"/>
+          <ListBox x:Name="DownloadList" BorderThickness="0" Background="Transparent">
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="ListBoxItem">
+                <Setter Property="Padding" Value="0,8,0,8"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="Template">
+                  <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                      <Border Padding="{TemplateBinding Padding}" Background="Transparent">
+                        <ContentPresenter/>
+                      </Border>
+                    </ControlTemplate>
+                  </Setter.Value>
+                </Setter>
+              </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <DockPanel>
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Show" Margin="8,0,0,0" Padding="8,4" ClickMode="Press" Click="OnShowDownload" Tag="{Binding}" Visibility="{Binding FolderVisibility}" ToolTip="Show in folder"/>
+                    <Button Content="Cancel" Margin="8,0,0,0" Padding="8,4" ClickMode="Press" Click="OnCancelDownload" Tag="{Binding}" Visibility="{Binding CancelVisibility}"/>
+                  </StackPanel>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                    <Grid Height="3" Margin="0,6,8,4" Background="#333333">
+                      <Rectangle Fill="#8FB573" HorizontalAlignment="Stretch" RenderTransformOrigin="0,0.5">
+                        <Rectangle.RenderTransform>
+                          <ScaleTransform ScaleX="{Binding Fraction}"/>
+                        </Rectangle.RenderTransform>
+                      </Rectangle>
+                    </Grid>
+                    <TextBlock Text="{Binding Detail}" Foreground="#8EA088" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

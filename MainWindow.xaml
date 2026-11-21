@@ -1,7 +1,6 @@
 <Window x:Class="Guardex.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:local="clr-namespace:Guardex"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="GUARDEX"
         Width="1040" Height="720"
@@ -163,8 +162,7 @@
       <Button x:Name="NavTraffic" Content="Traffic" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavBlocks" Content="Blocks" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavHost" Content="Host" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
-      <Button x:Name="NavRemote" Content="Remote" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
-      <Button x:Name="NavSite" Content="Site" Click="OnNav" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavRemote" Content="Remote" Click="OnNav" HorizontalContentAlignment="Left"/>
     </StackPanel>
 
     <Grid Margin="0,0,18,18">
@@ -256,10 +254,18 @@
     <Grid x:Name="HostPage" Visibility="Collapsed">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
-      <TextBlock x:Name="PostureStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8"/>
-      <Grid Grid.Row="1">
+      <StackPanel Margin="0,0,0,12">
+        <TextBlock Text="TELEMETRY" Foreground="#8EA088" Margin="0,0,0,8"/>
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Windows diagnostic reporting is blocked while this is on. Windows Update and Defender stay on. Microsoft account settings sync may stop."/>
+        <Button x:Name="TelemetryButton" Content="Turn off" HorizontalAlignment="Left" Click="OnTelemetry"/>
+        <TextBlock x:Name="TelemetryStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,8,0,0" Text="Checking the telemetry block."/>
+      </StackPanel>
+      <TextBlock x:Name="PostureStatus" Grid.Row="1" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8"/>
+      <Grid Grid.Row="2">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="1.25*"/>
           <ColumnDefinition Width="12"/>
@@ -345,7 +351,6 @@
       </ListBox>
     </Grid>
 
-    <local:SiteBrowser x:Name="SitePage" Visibility="Collapsed"/>
     </Grid>
   </DockPanel>
 </Window>

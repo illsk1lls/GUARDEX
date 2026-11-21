@@ -119,15 +119,28 @@ static class SetupWork
 	public static void Shortcut(string exe)
 	{
 		var menu = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
-		Directory.CreateDirectory(menu);
-		var lnk = Path.Combine(menu, "GUARDEX.lnk");
+		Link(menu, "GUARDEX.lnk", exe, "GUARDEX");
+	}
+
+	public static void BrowserLinks(string exe)
+	{
+		var menu = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
+		Link(menu, "GUARDEX Browser.lnk", exe, "GUARDEX Browser");
+		var desk = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+		Link(desk, "GUARDEX Browser.lnk", exe, "GUARDEX Browser");
+	}
+
+	static void Link(string folder, string name, string exe, string description)
+	{
+		Directory.CreateDirectory(folder);
+		var lnk = Path.Combine(folder, name);
 		var type = Type.GetTypeFromProgID("WScript.Shell");
 		if (type == null) return;
 		dynamic shell = Activator.CreateInstance(type)!;
 		dynamic link = shell.CreateShortcut(lnk);
 		link.TargetPath = exe;
 		link.WorkingDirectory = Path.GetDirectoryName(exe)!;
-		link.Description = "GUARDEX";
+		link.Description = description;
 		link.Save();
 	}
 

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Guardex.Tunnel</RootNamespace>
+    <AssemblyName>Guardex.Tunnel</AssemblyName>
+    <Description>GUARDEX browser tunnel and torrent engine</Description>
+  </PropertyGroup>
+</Project>

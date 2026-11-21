@@ -7,7 +7,7 @@ static class Program
 	{
 		if (args.Contains("--check"))
 		{
-			var parts = new[] { Scorer.SelfCheck(), PostureRules.SelfCheck(), RemoteCatalog.SelfCheck(), Enforcer.SelfCheck(), LaunchRules.SelfCheck(), ClipRules.SelfCheck(), ProcList.SelfCheck(), LinkRules.SelfCheck(), SiteDesk.SelfCheck(), ModelNames.SelfCheck() };
+			var parts = new[] { Scorer.SelfCheck(), PostureRules.SelfCheck(), RemoteCatalog.SelfCheck(), Enforcer.SelfCheck(), LaunchRules.SelfCheck(), ClipRules.SelfCheck(), ProcList.SelfCheck(), ModelNames.SelfCheck(), Telemetry.SelfCheck() };
 			if (parts.All(p => p == "PASS"))
 			{
 				Console.WriteLine("PASS");

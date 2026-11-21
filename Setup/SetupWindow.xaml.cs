@@ -112,6 +112,10 @@ public partial class SetupWindow : Window
 
 		Report(88, "Adding the Start menu shortcut.");
 		SetupWork.Shortcut(exe);
+		var browser = Path.Combine(dest, "GuardexBrowser.exe");
+		if (!File.Exists(browser))
+			throw new InvalidOperationException("GuardexBrowser.exe was not in the package.");
+		SetupWork.BrowserLinks(browser);
 		Report(94, signIn ? "Setting GUARDEX to start at sign-in." : "Leaving startup unchanged.");
 		SetupWork.SignInTask(exe, signIn);
 
