@@ -10,7 +10,7 @@
     <RootNamespace>Guardex.Browser</RootNamespace>
     <AssemblyName>GuardexBrowser</AssemblyName>
     <ApplicationTitle>GUARDEX Browser</ApplicationTitle>
-    <Version>0.6.3</Version>
+    <Version>0.6.4</Version>
     <ApplicationIcon>..\assets\guardex-browser.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

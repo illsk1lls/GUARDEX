@@ -140,6 +140,7 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
     </Grid.RowDefinitions>
 
@@ -289,7 +290,21 @@
       </DockPanel>
     </Border>
 
-    <Grid Grid.Row="5">
+    <Border x:Name="VaultBar" Grid.Row="5" Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="0,1,0,1" Padding="12,8">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="VaultYes" Content="Save" Margin="8,0,0,0" Click="OnVaultYes"/>
+          <Button x:Name="VaultNever" Content="Never" Margin="8,0,0,0" Click="OnVaultNever"/>
+          <Button Content="Not now" Margin="8,0,0,0" Click="OnVaultNotNow"/>
+        </StackPanel>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="VaultText" TextWrapping="Wrap"/>
+          <TextBlock x:Name="VaultHint" Foreground="#8EA088" TextWrapping="Wrap"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Row="6">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition x:Name="CallsColumn" Width="0"/>
@@ -488,11 +503,18 @@
               <TextBlock Text="Ads and trackers" FontSize="16" FontWeight="SemiBold"/>
               <TextBlock x:Name="AdStatus" Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap" Text="Loading filter lists."/>
               <Button x:Name="AdButton" Content="Turn off" HorizontalAlignment="Left" Margin="0,0,0,8" Click="OnAdToggle"/>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <RadioButton x:Name="AdEasy" Content="Easy" GroupName="AdMode" Checked="OnAdMode"/>
+                <RadioButton x:Name="AdMedium" Content="Medium" GroupName="AdMode" Checked="OnAdMode"/>
+                <RadioButton x:Name="AdHard" Content="Hard" GroupName="AdMode" Checked="OnAdMode"/>
+              </StackPanel>
               <TextBlock Margin="0,0,0,16" Foreground="#8EA088" TextWrapping="Wrap"
-                         Text="EasyList and EasyPrivacy. The page address is not blocked. Matching ads and trackers are blocked, and in-player video ads are skipped. Lists refresh about every four days."/>
+                         Text="EasyList, EasyPrivacy, Peter Lowe's ad servers, and a malicious-address list. Easy uses those lists. Medium also blocks third-party scripts and frames. Hard also blocks every other third-party request. Medium and hard break some sites. The page address is not blocked. In-player video ads are skipped. Lists refresh about every four days."/>
               <TextBlock Text="Passwords" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
-                         Text="Passwords and autofill stay off."/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Saved passwords and sign-in cookies are encrypted for this PC. They are loaded only while you are on that site. A copy of them does not open on another computer."/>
+              <TextBlock x:Name="VaultCount" Margin="0,0,0,8" TextWrapping="Wrap" Text="No saved sign-ins."/>
+              <Button Content="Forget saved sign-ins" HorizontalAlignment="Left" Margin="0,0,0,16" Click="OnForgetSignIns"/>
               <TextBlock Text="History and bookmarks" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
               <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import bookmarks from Chrome, Edge, or Firefox. Existing bookmarks stay."/>
               <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
@@ -537,6 +559,8 @@
           </DockPanel>
           <Border Height="1" Background="#2C3828" Margin="8,4"/>
           <Button Style="{StaticResource MenuItem}" Content="Calls" Click="OnCallsToggle"/>
+          <Button Style="{StaticResource MenuItem}" Content="Protect this sign-in" Click="OnProtectSignIn"/>
+          <Button Style="{StaticResource MenuItem}" Content="Forget this sign-in" Click="OnForgetSignIn"/>
           <Button Style="{StaticResource MenuItem}" Content="Settings" Click="OnOpenSettings"/>
         </StackPanel>
       </Border>

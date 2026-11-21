@@ -24,7 +24,8 @@ static class Program
 				AdBlock.SelfCheck(),
 				Guardex.Favorites.SelfCheck(),
 				Guardex.Favicon.SelfCheck(),
-				HomeDesk.SelfCheck()
+				HomeDesk.SelfCheck(),
+				VaultDesk.SelfCheck()
 			};
 			if (parts.All(part => part == "PASS"))
 			{

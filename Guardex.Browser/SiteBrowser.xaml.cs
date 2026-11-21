@@ -189,11 +189,21 @@ public partial class SiteBrowser : UserControl
 	Task _adQueue = Task.CompletedTask;
 	bool _pageFull;
 	bool _bookBar = true;
+	bool _adModeLock;
 	bool _addressLock;
 	bool _addressSelectAll;
 	int _suggestPick = -1;
 	Point _addressDown;
 	HomeShortcut? _homeEdit;
+	readonly HashSet<string> _liveSites = new(StringComparer.Ordinal);
+	readonly SemaphoreSlim _vaultGate = new(1, 1);
+	bool _parked;
+	bool _parking;
+	bool _vaultDismissed;
+	string _vaultPage = "";
+	string _vaultKind = "";
+	string _vaultUser = "";
+	string _vaultPass = "";
 
 	public SiteBrowser()
 	{
@@ -268,6 +278,45 @@ public partial class SiteBrowser : UserControl
 
 	public void Wake() => _wake ??= Start();
 
+	public void ParkSignIns()
+	{
+		if (_parked) return;
+		_parked = true;
+		_parking = true;
+		ClearVaultPrompt();
+		try
+		{
+			foreach (var tab in _tabs.ToList())
+			{
+				var core = tab.View.CoreWebView2;
+				if (core == null || !VaultDesk.TrySite(tab.PageUrl, out var site) || !VaultDesk.HasSignIn(site)) continue;
+				try { core.Navigate("about:blank"); } catch { }
+			}
+			var coreAny = AnyCore();
+			if (coreAny != null)
+				foreach (var site in VaultDesk.SignSites()) DropSite(coreAny, site);
+			_liveSites.Clear();
+		}
+		finally
+		{
+			_parking = false;
+		}
+	}
+
+	public void ResumeSignIns()
+	{
+		if (!_parked) return;
+		_parked = false;
+		foreach (var tab in _tabs.ToList())
+		{
+			var core = tab.View.CoreWebView2;
+			if (core == null || !VaultDesk.TrySite(tab.PageUrl, out var site) || !VaultDesk.HasSignIn(site)) continue;
+			Inject(core, site);
+			_liveSites.Add(site);
+			try { core.Navigate(tab.PageUrl); } catch { }
+		}
+	}
+
 	async Task Start()
 	{
 		try
@@ -277,6 +326,7 @@ public partial class SiteBrowser : UserControl
 			_bookmarks.AddRange(SiteDesk.ReadVisits(ReadFile(BookmarkFile), SiteDesk.BookmarkMax));
 			FillLists();
 			PaintHome();
+			await SweepProfile();
 			var urls = SiteDesk.ReadSession(ReadFile(SessionFile));
 			if (urls.Count == 0)
 			{
@@ -347,6 +397,7 @@ public partial class SiteBrowser : UserControl
 		var core = view.CoreWebView2;
 		core.Settings.IsPasswordAutosaveEnabled = false;
 		core.Settings.IsGeneralAutofillEnabled = false;
+		core.Settings.IsWebMessageEnabled = true;
 		core.Settings.IsStatusBarEnabled = false;
 		core.Settings.AreDefaultContextMenusEnabled = true;
 		core.Settings.AreDefaultScriptDialogsEnabled = true;
@@ -378,11 +429,25 @@ public partial class SiteBrowser : UserControl
 				AskMagnet(navUri);
 				return;
 			}
+			if (_parking || (_parked && (navUri.Length == 0 || navUri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))))
+				return;
 			if (tab == Active) CloseSettings();
 			tab.Loading = true;
 			tab.PageUrl = args.Uri ?? "";
 			tab.Calls.Clear();
-			if (tab == Active) PaintChrome();
+			if (tab == Active)
+			{
+				NoteVaultPage(tab.PageUrl);
+				PaintChrome();
+			}
+			if (_parked || !VaultDesk.TrySite(tab.PageUrl, out var site)) return;
+			if (VaultDesk.HasSignIn(site) && !_liveSites.Contains(site))
+			{
+				args.Cancel = true;
+				_ = Arm(tab, site, tab.PageUrl);
+				return;
+			}
+			_ = ReleaseSites(tab);
 		};
 		core.NavigationCompleted += (_, args) =>
 		{
@@ -395,12 +460,34 @@ public partial class SiteBrowser : UserControl
 			}
 			else if (tab == Active && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
 				SetNote("The page did not finish loading.");
+			if (_parked)
+			{
+				var parkedCore = tab.View.CoreWebView2;
+				if (parkedCore != null)
+					foreach (var signed in VaultDesk.SignSites()) DropSite(parkedCore, signed);
+			}
+			else if (args.IsSuccess && VaultDesk.TrySite(tab.PageUrl, out var site) && _liveSites.Contains(site))
+				_ = KeepCookies(tab, site);
 			if (tab == Active) PaintChrome();
 		};
+		core.WebMessageReceived += (_, message) =>
+		{
+			string json;
+			try { json = message.WebMessageAsJson; }
+			catch { return; }
+			if (!VaultDesk.ReadMessage(json, out var kind, out var user, out var pass)) return;
+			var source = message.Source;
+			Dispatcher.BeginInvoke(() => OnVaultMessage(tab, source, kind, user, pass));
+		};
+		_ = core.AddScriptToExecuteOnDocumentCreatedAsync(VaultDesk.Script);
 		core.SourceChanged += (_, _) =>
 		{
 			if (!string.IsNullOrWhiteSpace(core.Source)) tab.PageUrl = core.Source;
-			if (tab == Active) PaintChrome();
+			if (tab == Active)
+			{
+				NoteVaultPage(tab.PageUrl);
+				PaintChrome();
+			}
 			SaveSession();
 		};
 		core.DocumentTitleChanged += (_, _) =>
@@ -500,9 +587,21 @@ public partial class SiteBrowser : UserControl
 	{
 		AdButton.Content = AdBlock.Shared.Enabled ? "Turn off" : "Turn on";
 		AdStatus.Text = AdBlock.Shared.Status;
+		_adModeLock = true;
+		AdEasy.IsChecked = AdBlock.Shared.Mode == 0;
+		AdMedium.IsChecked = AdBlock.Shared.Mode == 1;
+		AdHard.IsChecked = AdBlock.Shared.Mode == 2;
+		_adModeLock = false;
 	}
 
 	void OnAdToggle(object sender, RoutedEventArgs e) => AdBlock.Shared.SetEnabled(!AdBlock.Shared.Enabled);
+
+	void OnAdMode(object sender, RoutedEventArgs e)
+	{
+		if (_adModeLock || sender is not System.Windows.Controls.Primitives.ToggleButton box || box.IsChecked != true) return;
+		var name = (sender as FrameworkElement)?.Name;
+		AdBlock.Shared.SetMode(name == "AdHard" ? 2 : name == "AdMedium" ? 1 : 0);
+	}
 
 	async Task WatchCalls(SiteTab tab, CoreWebView2 core)
 	{
@@ -647,6 +746,7 @@ public partial class SiteBrowser : UserControl
 	{
 		foreach (var item in _tabs)
 			item.Selected = item == tab;
+		NoteVaultPage(tab.PageUrl);
 		PaintChrome();
 		if (_findOpen) _ = RunFind(false);
 	}
@@ -660,7 +760,9 @@ public partial class SiteBrowser : UserControl
 			if (_closed.Count > 10) _closed.RemoveAt(_closed.Count - 1);
 		}
 		var index = _tabs.IndexOf(tab);
+		var core = tab.View.CoreWebView2;
 		_tabs.Remove(tab);
+		if (core != null) ReleaseSitesNow(core);
 		ViewHost.Children.Remove(tab.View);
 		try { tab.View.Dispose(); } catch { }
 		if (_tabs.Count == 0) _ = AddTab(null, true, true);
@@ -748,6 +850,7 @@ public partial class SiteBrowser : UserControl
 			HomePane.Visibility = Visibility.Collapsed;
 			BookBar.Visibility = Visibility.Collapsed;
 			SettingsPage.Visibility = Visibility.Collapsed;
+			VaultBar.Visibility = Visibility.Collapsed;
 			MenuPopup.IsOpen = false;
 			DownloadsPopup.IsOpen = false;
 			SuggestPopup.IsOpen = false;
@@ -755,6 +858,7 @@ public partial class SiteBrowser : UserControl
 			ApplyViews(true);
 			return;
 		}
+		VaultBar.Visibility = _vaultKind.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 		SettingsPage.Visibility = _settingsOpen ? Visibility.Visible : Visibility.Collapsed;
 		MenuPopup.IsOpen = _menuOpen;
 		DownloadsPopup.IsOpen = _downloadsOpen;
@@ -919,6 +1023,337 @@ public partial class SiteBrowser : UserControl
 		foreach (var item in HomeDesk.Items) item.RefreshIcon();
 	}
 
+	async Task SweepProfile()
+	{
+		if (_parked || VaultDesk.SignSites().Length == 0) return;
+		await EnsureEnv();
+		var view = new WebView2 { Visibility = Visibility.Collapsed };
+		ViewHost.Children.Add(view);
+		try
+		{
+			await view.EnsureCoreWebView2Async(_env);
+			var core = view.CoreWebView2;
+			foreach (var site in VaultDesk.SignSites()) DropSite(core, site);
+			_liveSites.Clear();
+		}
+		finally
+		{
+			ViewHost.Children.Remove(view);
+			try { view.Dispose(); } catch { }
+		}
+	}
+
+	async Task Arm(SiteTab tab, string site, string url)
+	{
+		try
+		{
+			await _vaultGate.WaitAsync();
+			try
+			{
+				if (_parked || !_tabs.Contains(tab)) return;
+				var core = tab.View.CoreWebView2;
+				if (core == null) return;
+				ReleaseSitesNow(core);
+				if (!VaultDesk.HasSignIn(site) || _liveSites.Contains(site)) return;
+				if (!VaultDesk.TrySite(tab.PageUrl, out var page) || page != site) return;
+				Inject(core, site);
+				_liveSites.Add(site);
+				if (_parked)
+				{
+					DropSite(core, site);
+					_liveSites.Remove(site);
+					return;
+				}
+				core.Navigate(url);
+			}
+			finally
+			{
+				_vaultGate.Release();
+			}
+		}
+		catch { }
+	}
+
+	async Task ReleaseSites(SiteTab tab)
+	{
+		try
+		{
+			await _vaultGate.WaitAsync();
+			try
+			{
+				if (_parked) return;
+				var core = tab.View.CoreWebView2 ?? AnyCore();
+				if (core != null) ReleaseSitesNow(core);
+			}
+			finally
+			{
+				_vaultGate.Release();
+			}
+		}
+		catch { }
+	}
+
+	void ReleaseSitesNow(CoreWebView2 core)
+	{
+		foreach (var site in _liveSites.ToArray())
+		{
+			if (SiteOpen(site)) continue;
+			DropSite(core, site);
+			_liveSites.Remove(site);
+		}
+	}
+
+	bool SiteOpen(string site)
+	{
+		foreach (var tab in _tabs)
+			if (VaultDesk.TrySite(tab.PageUrl, out var got) && got == site) return true;
+		return false;
+	}
+
+	CoreWebView2? AnyCore()
+	{
+		foreach (var tab in _tabs)
+			if (tab.View.CoreWebView2 != null) return tab.View.CoreWebView2;
+		return null;
+	}
+
+	static void DropSite(CoreWebView2 core, string site)
+	{
+		foreach (var name in VaultDesk.CookieNames(site))
+		{
+			if (name.Length == 0) continue;
+			try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
+		}
+	}
+
+	void Inject(CoreWebView2 core, string site)
+	{
+		var manager = core.CookieManager;
+		foreach (var cookie in VaultDesk.Cookies(site))
+		{
+			try
+			{
+				if (cookie.Name.Length == 0 || cookie.Domain.Length == 0) continue;
+				var path = string.IsNullOrWhiteSpace(cookie.Path) ? "/" : cookie.Path;
+				var made = manager.CreateCookie(cookie.Name, cookie.Value, cookie.Domain, path);
+				made.IsHttpOnly = cookie.HttpOnly;
+				made.IsSecure = cookie.Secure;
+				made.SameSite = cookie.SameSite switch
+				{
+					"none" => CoreWebView2CookieSameSiteKind.None,
+					"strict" => CoreWebView2CookieSameSiteKind.Strict,
+					_ => CoreWebView2CookieSameSiteKind.Lax
+				};
+				made.Expires = cookie.Session || cookie.Expires <= 0
+					? DateTime.MinValue
+					: DateTimeOffset.FromUnixTimeSeconds(cookie.Expires).UtcDateTime;
+				manager.AddOrUpdateCookie(made);
+			}
+			catch { }
+		}
+	}
+
+	async Task<bool> KeepCookies(SiteTab tab, string site)
+	{
+		if (_parked || !_tabs.Contains(tab)) return false;
+		var core = tab.View.CoreWebView2;
+		if (core == null) return false;
+		IReadOnlyList<CoreWebView2Cookie> list;
+		try { list = await core.CookieManager.GetCookiesAsync(site + "/"); }
+		catch { return false; }
+		if (_parked || !_tabs.Contains(tab)) return false;
+		if (!VaultDesk.TrySite(tab.PageUrl, out var page) || page != site) return false;
+		var seen = new List<VaultDesk.SeenCookie>(list.Count);
+		foreach (var cookie in list)
+		{
+			var session = cookie.IsSession || cookie.Expires == DateTime.MinValue;
+			long expires = 0;
+			if (!session)
+			{
+				try
+				{
+					var when = cookie.Expires.Kind switch
+					{
+						DateTimeKind.Local => cookie.Expires.ToUniversalTime(),
+						DateTimeKind.Utc => cookie.Expires,
+						_ => DateTime.SpecifyKind(cookie.Expires, DateTimeKind.Utc)
+					};
+					expires = new DateTimeOffset(when).ToUnixTimeSeconds();
+				}
+				catch
+				{
+					session = true;
+				}
+			}
+			seen.Add(new VaultDesk.SeenCookie(
+				cookie.Name ?? "",
+				cookie.Value ?? "",
+				cookie.Domain ?? "",
+				cookie.Path ?? "/",
+				cookie.IsSecure,
+				cookie.IsHttpOnly,
+				session,
+				expires,
+				cookie.SameSite switch
+				{
+					CoreWebView2CookieSameSiteKind.None => "none",
+					CoreWebView2CookieSameSiteKind.Strict => "strict",
+					_ => "lax"
+				}));
+		}
+		var previous = VaultDesk.CookieNames(site);
+		if (!VaultDesk.SaveCookies(site, seen)) return false;
+		var kept = new HashSet<string>(VaultDesk.CookieNames(site), StringComparer.Ordinal);
+		foreach (var name in previous)
+		{
+			if (name.Length == 0 || kept.Contains(name)) continue;
+			try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
+		}
+		return true;
+	}
+
+	void NoteVaultPage(string? url)
+	{
+		var site = VaultDesk.TrySite(url, out var got) ? got : "";
+		if (site == _vaultPage) return;
+		_vaultPage = site;
+		_vaultDismissed = false;
+		ClearVaultPrompt();
+	}
+
+	void ClearVaultPrompt()
+	{
+		_vaultKind = "";
+		_vaultUser = "";
+		_vaultPass = "";
+		VaultText.Text = "";
+		VaultHint.Text = "";
+		VaultBar.Visibility = Visibility.Collapsed;
+	}
+
+	void DismissVault()
+	{
+		ClearVaultPrompt();
+		_vaultDismissed = true;
+	}
+
+	void NeverVault()
+	{
+		var site = _vaultPage;
+		ClearVaultPrompt();
+		_vaultDismissed = true;
+		if (site.Length > 0) VaultDesk.Never(site);
+	}
+
+	void ShowVault(string kind, string user, string pass)
+	{
+		if (_vaultPage.Length == 0) return;
+		_vaultKind = kind;
+		_vaultUser = kind == "fill" ? "" : user;
+		_vaultPass = kind == "fill" ? "" : pass;
+		var label = VaultDesk.Label(_vaultPage);
+		if (kind == "fill")
+		{
+			VaultText.Text = "Use the saved password for " + label + "?";
+			VaultHint.Text = "";
+			VaultYes.Content = "Fill";
+			VaultNever.Visibility = Visibility.Collapsed;
+		}
+		else
+		{
+			VaultText.Text = (kind == "update" ? "Update the password for " : "Save the password for ") + label + " on this PC?";
+			VaultHint.Text = "The sign-in cookie is encrypted with it and loaded only on this site.";
+			VaultYes.Content = kind == "update" ? "Update" : "Save";
+			VaultNever.Visibility = Visibility.Visible;
+		}
+		VaultBar.Visibility = _pageFull ? Visibility.Collapsed : Visibility.Visible;
+	}
+
+	void OnVaultMessage(SiteTab tab, string? source, string kind, string user, string pass)
+	{
+		try
+		{
+			if (_parked || tab != Active || !_tabs.Contains(tab)) return;
+			if (!VaultDesk.TrySite(source, out var from)) return;
+			if (!VaultDesk.TrySite(tab.PageUrl, out var page) || from != page || page != _vaultPage) return;
+			if (_vaultDismissed) return;
+			if (kind == "focus")
+			{
+				if (_vaultKind is "save" or "update") return;
+				if (!VaultDesk.HasPassword(page)) return;
+				ShowVault("fill", "", "");
+				return;
+			}
+			if (kind != "save") return;
+			var offer = VaultDesk.Offer(page, user, pass);
+			if (offer.Length == 0) return;
+			ShowVault(offer, user, pass);
+		}
+		finally
+		{
+			user = "";
+			pass = "";
+		}
+	}
+
+	async Task AcceptVault()
+	{
+		var kind = _vaultKind;
+		var site = _vaultPage;
+		var user = _vaultUser;
+		var pass = _vaultPass;
+		ClearVaultPrompt();
+		try
+		{
+			if (kind is "save" or "update")
+			{
+				var note = VaultDesk.SavePassword(site, user, pass);
+				if (note.Length > 0)
+				{
+					SetNote(note);
+					return;
+				}
+				_vaultDismissed = true;
+				SetNote("Saved for this PC.");
+				var tab = Active;
+				if (tab != null && VaultDesk.TrySite(tab.PageUrl, out var page) && page == site)
+					_ = KeepCookies(tab, site);
+				PaintVault();
+				return;
+			}
+			if (kind != "fill") return;
+			_vaultDismissed = true;
+			if (!VaultDesk.TryPassword(site, out user, out pass))
+			{
+				SetNote("The saved password could not be opened.");
+				return;
+			}
+			var script = VaultDesk.FillScript(user, pass);
+			var core = Active?.View.CoreWebView2;
+			if (_parked || core == null || !VaultDesk.TrySite(core.Source, out var here) || here != site)
+			{
+				SetNote("The password could not be filled.");
+				return;
+			}
+			await core.ExecuteScriptAsync(script);
+		}
+		catch
+		{
+			if (kind == "fill") SetNote("The password could not be filled.");
+		}
+		finally
+		{
+			user = "";
+			pass = "";
+		}
+	}
+
+	void PaintVault()
+	{
+		var count = VaultDesk.Remembered();
+		VaultCount.Text = count == 0 ? "No saved sign-ins." : count == 1 ? "1 saved sign-in." : count + " saved sign-ins.";
+	}
+
 	void SetNote(string text)
 	{
 		_note = text ?? "";
@@ -1003,6 +1438,11 @@ public partial class SiteBrowser : UserControl
 		else if (key == Key.Escape && _currentAsk != null)
 		{
 			FinishAsk(true);
+			handled = true;
+		}
+		else if (key == Key.Escape && _vaultKind.Length > 0)
+		{
+			DismissVault();
 			handled = true;
 		}
 		else if (key == Key.Escape && HomeEditor.Visibility == Visibility.Visible)
@@ -1223,6 +1663,66 @@ public partial class SiteBrowser : UserControl
 		}
 	}
 	void OnOpenSettings(object sender, RoutedEventArgs e) => OpenSettings("general");
+	void OnVaultYes(object sender, RoutedEventArgs e) => _ = AcceptVault();
+	void OnVaultNever(object sender, RoutedEventArgs e) => NeverVault();
+	void OnVaultNotNow(object sender, RoutedEventArgs e) => DismissVault();
+	async void OnProtectSignIn(object sender, RoutedEventArgs e)
+	{
+		CloseMenu();
+		var tab = Active;
+		var core = tab?.View.CoreWebView2;
+		if (_parked || core == null || !VaultDesk.TrySite(core.Source, out var site))
+		{
+			SetNote("This page has no sign-in cookie to protect.");
+			return;
+		}
+		var saved = await KeepCookies(tab!, site);
+		SetNote(saved
+			? "Sign-in for " + VaultDesk.Label(site) + " is protected on this PC."
+			: "This page has no sign-in cookie to protect.");
+		PaintVault();
+	}
+	void OnForgetSignIn(object sender, RoutedEventArgs e)
+	{
+		CloseMenu();
+		var core = Active?.View.CoreWebView2;
+		if (core == null || !VaultDesk.TrySite(core.Source, out var site)) return;
+		var had = VaultDesk.HasPassword(site) || VaultDesk.HasSignIn(site);
+		var names = VaultDesk.CookieNames(site);
+		VaultDesk.ForgetSite(site);
+		foreach (var name in names)
+		{
+			if (name.Length == 0) continue;
+			try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
+		}
+		_liveSites.Remove(site);
+		if (_vaultPage == site) DismissVault();
+		if (had) SetNote("Sign-in for " + VaultDesk.Label(site) + " was forgotten on this PC.");
+		PaintVault();
+	}
+	void OnForgetSignIns(object sender, RoutedEventArgs e)
+	{
+		var core = AnyCore();
+		var sites = VaultDesk.SignSites();
+		var names = new Dictionary<string, string[]>(StringComparer.Ordinal);
+		foreach (var site in sites) names[site] = VaultDesk.CookieNames(site);
+		VaultDesk.ForgetAll();
+		if (core != null)
+		{
+			foreach (var pair in names)
+			{
+				foreach (var name in pair.Value)
+				{
+					if (name.Length == 0) continue;
+					try { core.CookieManager.DeleteCookies(name, pair.Key + "/"); } catch { }
+				}
+			}
+		}
+		_liveSites.Clear();
+		ClearVaultPrompt();
+		PaintVault();
+		SetNote("Saved sign-ins were forgotten on this PC.");
+	}
 	void OnSettingsNav(object sender, RoutedEventArgs e)
 	{
 		if (sender is FrameworkElement el && el.Tag is string name) ShowSection(name);
@@ -1801,6 +2301,7 @@ public partial class SiteBrowser : UserControl
 		PageDownloads.Visibility = name == "downloads" ? Visibility.Visible : Visibility.Collapsed;
 		PageVpn.Visibility = name == "vpn" ? Visibility.Visible : Visibility.Collapsed;
 		PagePrivacy.Visibility = name == "privacy" ? Visibility.Visible : Visibility.Collapsed;
+		if (name == "privacy") PaintVault();
 		MarkNav(NavGeneral, name == "general");
 		MarkNav(NavDownloads, name == "downloads");
 		MarkNav(NavVpn, name == "vpn");

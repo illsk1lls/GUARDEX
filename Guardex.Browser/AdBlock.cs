@@ -12,7 +12,9 @@ using Guardex.Tunnel;
 
 namespace Guardex.Browser;
 
-// EasyList and EasyPrivacy, applied in this browser. The lists are downloaded, not shipped.
+// EasyList, EasyPrivacy, Peter Lowe's ad servers, and a malicious-address list.
+// The lists are downloaded, not shipped. Easy uses the lists. Medium also blocks
+// third-party scripts and frames. Hard also blocks every other third-party request.
 sealed class AdBlock
 {
 	const int Script = 1;
@@ -40,7 +42,9 @@ sealed class AdBlock
 	static readonly (string Name, string Url)[] Sources =
 	[
 		("easylist.txt", "https://easylist.to/easylist/easylist.txt"),
-		("easyprivacy.txt", "https://easylist.to/easylist/easyprivacy.txt")
+		("easyprivacy.txt", "https://easylist.to/easylist/easyprivacy.txt"),
+		("peter-lowe.txt", "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=0&mimetype=plaintext"),
+		("urlhaus.txt", "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-ag-online.txt")
 	];
 
 	readonly object _gate = new();
@@ -49,15 +53,19 @@ sealed class AdBlock
 	string _status = "On. Loading filter lists.";
 	string _loaded = "";
 	int _started;
+	volatile int _mode;
 	volatile bool _enabled;
 
 	AdBlock()
 	{
 		_enabled = ReadFlag();
+		_mode = ReadMode();
 		if (!_enabled) _status = "Off.";
 	}
 
 	public bool Enabled => _enabled;
+
+	public int Mode => _mode;
 
 	public string Status
 	{
@@ -86,8 +94,22 @@ sealed class AdBlock
 		Changed?.Invoke();
 	}
 
+	public void SetMode(int mode)
+	{
+		var next = mode == 1 ? 1 : mode == 2 ? 2 : 0;
+		if (next == _mode) return;
+		_mode = next;
+		try
+		{
+			Directory.CreateDirectory(Root());
+			File.WriteAllText(ModePath(), next switch { 1 => "medium", 2 => "hard", _ => "easy" });
+		}
+		catch { }
+		Changed?.Invoke();
+	}
+
 	public bool Block(string pageUrl, string requestUrl, string kind, bool mainFrame) =>
-		_enabled && _set.Blocks(pageUrl, requestUrl, kind, mainFrame);
+		_enabled && _set.Blocks(pageUrl, requestUrl, kind, mainFrame, _mode);
 
 	public string CosmeticScript() => _enabled ? _set.Script() : "";
 
@@ -111,7 +133,16 @@ sealed class AdBlock
 			"##.ad-box\n" +
 			"example.com#@#.ad-box\n" +
 			"ads.example##.sponsor\n" +
-			"||plain.example/banner.js^$match-case\n";
+			"||plain.example/banner.js^$match-case\n" +
+			"||bad.example^$all\n" +
+			"||redir.example/ad.js^$script,redirect=noopjs\n" +
+			"||rule.example/ad.js^$script,redirect-rule=noopjs\n" +
+			"||obj.example/ad^$object\n" +
+			"||beacon.example/p^$beacon\n" +
+			"||keep.example/a.js^$script,collapse\n" +
+			"||strip.example/hit^$removeparam=utm_source\n" +
+			"@@||cdn-3p.example/lib.js^$important\n" +
+			"@@||cdn-3p.example/widget.js^\n";
 		var set = FilterSet.Parse(list);
 		var failures = new List<string>();
 		if (!set.Blocks("https://news.example/", "https://ads.example/banner.js", "script", false)) failures.Add("anchor");
@@ -167,6 +198,40 @@ sealed class AdBlock
 			failures.Add("yt video");
 		if (bare.Blocks("https://news.example/", "https://notdoubleclick.net/a.js", "script", false))
 			failures.Add("doubleclick boundary");
+		const string page = "https://news.example/";
+		const string thirdScript = "https://cdn-3p.example/app.js";
+		if (set.Blocks(page, thirdScript, "script", false)) failures.Add("easy 3p script");
+		if (!set.Blocks(page, thirdScript, "script", false, 1)) failures.Add("medium 3p script");
+		if (!set.Blocks(page, "https://cdn-3p.example/frame.html", "subdocument", false, 1)) failures.Add("medium 3p frame");
+		if (set.Blocks(page, "https://cdn-3p.example/a.png", "image", false, 1)) failures.Add("medium 3p image");
+		if (set.Blocks(page, "https://news.example/app.js", "script", false, 1)) failures.Add("medium 1p script");
+		if (set.Blocks(page, "https://cdn-3p.example/lib.js", "script", false, 1)) failures.Add("medium important exception");
+		if (!set.Blocks(page, "https://cdn-3p.example/widget.js", "script", false, 1)) failures.Add("medium plain exception");
+		if (set.Blocks(page, "https://cdn-3p.example/widget.js", "script", false)) failures.Add("easy plain exception");
+		if (!set.Blocks(page, "https://ads.example/bad.js", "script", false, 1)) failures.Add("medium important");
+		if (!set.Blocks(page, "https://cdn-3p.example/a.png", "image", false, 2)) failures.Add("hard 3p image");
+		if (set.Blocks(page, "https://news.example/a.png", "image", false, 2)) failures.Add("hard 1p image");
+		if (set.Blocks(page, "https://news.example/", "document", true, 2)) failures.Add("hard main");
+		if (set.Blocks(page, "http://127.0.0.1/a.js", "script", false, 2)) failures.Add("hard loopback");
+		if (set.Blocks(page, "http://localhost/a.js", "script", false, 2)) failures.Add("hard localhost");
+		if (!set.Blocks("https://bad.example/", "https://bad.example/a.js", "script", false)) failures.Add("all script");
+		if (!set.Blocks(page, "https://bad.example/a.png", "image", false)) failures.Add("all image");
+		if (set.Blocks("https://bad.example/", "https://bad.example/", "document", true)) failures.Add("all main");
+		if (!set.Blocks(page, "https://redir.example/ad.js", "script", false)) failures.Add("redirect");
+		if (set.Blocks(page, "https://redir.example/ad.js", "image", false)) failures.Add("redirect type");
+		if (set.Blocks(page, "https://rule.example/ad.js", "script", false)) failures.Add("redirect-rule");
+		if (!set.Blocks(page, "https://obj.example/ad", "other", false)) failures.Add("object");
+		if (set.Blocks(page, "https://obj.example/ad", "script", false)) failures.Add("object type");
+		if (!set.Blocks(page, "https://beacon.example/p", "ping", false)) failures.Add("beacon");
+		if (set.Blocks(page, "https://beacon.example/p", "script", false)) failures.Add("beacon type");
+		if (!set.Blocks(page, "https://keep.example/a.js", "script", false)) failures.Add("collapse");
+		if (set.Blocks(page, "https://strip.example/hit", "script", false)) failures.Add("removeparam");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://rr3---sn-abc.googlevideo.com/videoplayback?id=1", "media", false, 1))
+			failures.Add("yt video medium");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc", "document", true, 2))
+			failures.Add("yt watch hard");
+		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://rr3---sn-abc.googlevideo.com/videoplayback?id=1", "media", false, 2))
+			failures.Add("yt video hard");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 
@@ -178,7 +243,7 @@ sealed class AdBlock
 			var dir = FilterDir();
 			Directory.CreateDirectory(dir);
 			var paths = Sources.Select(item => Path.Combine(dir, item.Name)).ToArray();
-			if (paths.All(File.Exists)) Publish(FilterSet.Parse(ReadAll(paths)), true);
+			if (paths.Any(File.Exists)) Publish(FilterSet.Parse(ReadAll(paths)), true);
 			if (!_enabled) return;
 			if (!paths.Any(Stale)) return;
 			if (VpnHub.Require && VpnHub.HasConfig && !VpnHub.TunnelOn)
@@ -196,7 +261,7 @@ sealed class AdBlock
 				if (!Stale(path) || await Download(item.Url, path)) continue;
 				fresh = false;
 			}
-			if (paths.All(File.Exists)) Publish(FilterSet.Parse(ReadAll(paths)), fresh);
+			if (paths.Any(File.Exists)) Publish(FilterSet.Parse(ReadAll(paths)), fresh);
 			else
 			{
 				Note("On. Filter lists are not on disk yet.");
@@ -249,7 +314,7 @@ sealed class AdBlock
 		}
 		if (body == null || body.Length < 64 || body.Length > 20 * 1024 * 1024) return false;
 		var text = Encoding.UTF8.GetString(body);
-		if (!text.Contains("[Adblock", StringComparison.OrdinalIgnoreCase)) return false;
+		if (!FilterText(text)) return false;
 		var part = dest + ".part";
 		await File.WriteAllTextAsync(part, text, new UTF8Encoding(false));
 		File.Move(part, dest, true);
@@ -292,6 +357,31 @@ sealed class AdBlock
 		catch { return true; }
 	}
 
+	static bool FilterText(string text)
+	{
+		if (text.Contains("<html", StringComparison.OrdinalIgnoreCase) || text.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if (text.Contains("[Adblock", StringComparison.OrdinalIgnoreCase)) return true;
+		return text.Contains("! Title:", StringComparison.Ordinal) && text.Contains("||", StringComparison.Ordinal);
+	}
+
+	static int ReadMode()
+	{
+		try
+		{
+			var path = ModePath();
+			if (!File.Exists(path)) return 0;
+			var text = File.ReadAllText(path).Trim().ToLowerInvariant();
+			if (text is "medium" or "1") return 1;
+			if (text is "hard" or "2") return 2;
+			return 0;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
 	static bool ReadFlag()
 	{
 		try
@@ -316,6 +406,8 @@ sealed class AdBlock
 	static string FilterDir() => Path.Combine(Root(), "filters");
 
 	static string FlagPath() => Path.Combine(Root(), "adblock.txt");
+
+	static string ModePath() => Path.Combine(Root(), "adblock-mode.txt");
 
 	sealed class FilterSet
 	{
@@ -359,7 +451,7 @@ sealed class AdBlock
 			return set;
 		}
 
-		public bool Blocks(string pageUrl, string requestUrl, string kind, bool mainFrame)
+		public bool Blocks(string pageUrl, string requestUrl, string kind, bool mainFrame, int mode = 0)
 		{
 			if (mainFrame || requestUrl.Length == 0) return false;
 			if (!Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri)) return false;
@@ -372,6 +464,7 @@ sealed class AdBlock
 			var third = pageHost.Length == 0 || Registrable(pageHost) != Registrable(host);
 			var blocked = false;
 			var exception = false;
+			var exceptionImportant = false;
 			var important = false;
 			void Consider(Rule rule)
 			{
@@ -380,7 +473,11 @@ sealed class AdBlock
 				if (rule.Party == 2 && third) return;
 				if (!PageOk(rule, pageHost)) return;
 				if (!rule.Matches(requestUrl)) return;
-				if (rule.Exception) exception = true;
+				if (rule.Exception)
+				{
+					if (rule.Important) exceptionImportant = true;
+					else exception = true;
+				}
 				else if (rule.Important) important = true;
 				else blocked = true;
 			}
@@ -399,7 +496,9 @@ sealed class AdBlock
 					foreach (var rule in list) Consider(rule);
 			}
 			foreach (var rule in _slow) Consider(rule);
+			if (exceptionImportant) return false;
 			if (important) return true;
+			if (ModeHit(mode, third, bit)) return true;
 			if (exception) return false;
 			return blocked;
 		}
@@ -740,7 +839,12 @@ sealed class AdBlock
 			var value = eq >= 0 ? opt[(eq + 1)..] : "";
 			var neg = name.StartsWith('~');
 			var bare = (neg ? name[1..] : name).ToLowerInvariant();
-			if (bare == "match-case") continue;
+			if (bare is "match-case" or "collapse" or "donottrack" or "redirect") continue;
+			if (bare is "csp" or "popup" or "popunder" or "elemhide" or "ehide"
+				or "generichide" or "ghide" or "genericblock" or "specifichide" or "shide"
+				or "badfilter" or "removeparam" or "replace" or "rewrite" or "redirect-rule"
+				or "header" or "method" or "webrtc" or "inline-script" or "inline-font")
+				return false;
 			if (bare == "important")
 			{
 				if (!neg) important = true;
@@ -805,16 +909,23 @@ sealed class AdBlock
 			"image" => Image,
 			"stylesheet" or "css" => Style,
 			"xmlhttprequest" or "xhr" => Xhr,
-			"other" => Other,
+			"other" or "object" or "object-subrequest" => Other,
 			"font" => Font,
 			"media" => Media,
 			"subdocument" or "frame" => Sub,
-			"ping" => Ping,
+			"ping" or "beacon" => Ping,
 			"websocket" => Socket,
 			"document" or "doc" => Document,
 			_ => 0
 		};
 		return bit != 0;
+	}
+
+	static bool ModeHit(int mode, bool third, int bit)
+	{
+		if (mode <= 0 || !third || (bit & Document) != 0) return false;
+		if (mode == 1) return (bit & (Script | Sub)) != 0;
+		return true;
 	}
 
 	static int TypeBit(string kind) => kind switch

@@ -61,9 +61,11 @@ public partial class BrowserWindow : Window
 
 	public void ShowFromTray()
 	{
+		var hidden = !IsVisible;
 		Show();
 		WindowState = WindowState.Normal;
 		Activate();
+		if (hidden) Pages.ResumeSignIns();
 	}
 
 	void Boot()
@@ -333,6 +335,7 @@ public partial class BrowserWindow : Window
 
 	void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
 	{
+		Pages.ParkSignIns();
 		if (_allowClose)
 		{
 			_icon.Visible = false;
