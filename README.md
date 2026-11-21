@@ -141,7 +141,7 @@ The setup then:
 
 The downloads are the official Microsoft links `https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe` and `https://go.microsoft.com/fwlink/p/?LinkId=2124703`.
 
-Uninstall is `GUARDEX-Uninstall.exe`, also listed in Settings, Apps. It removes the programs, shortcuts, and the sign-in task. Two checkboxes are off unless you turn them on. One removes this account's GUARDEX data (tunnel file, filters, browser profile, baseline, saved sign-in, and the log) and puts diagnostic settings back before that folder is deleted. Downloaded files in Downloads\GUARDEX stay. The other removes firewall rules GUARDEX added. The .NET runtime and WebView2 are left installed.
+Uninstall is `GUARDEX-Uninstall.exe`, also listed in Settings, Apps. It removes the programs, shortcuts, and the sign-in task. Two checkboxes are off unless you turn them on. Once removal starts, those choices leave the window. A progress bar then follows the steps that are actually running, and it is full when GUARDEX is removed. One removes this account's GUARDEX data (tunnel file, filters, browser profile, baseline, saved sign-in, and the log) and puts diagnostic settings back before that folder is deleted. Downloaded files in Downloads\GUARDEX stay. The other removes firewall rules GUARDEX added. The .NET runtime and WebView2 are left installed.
 
 To build that setup on a machine that already has the SDK:
 

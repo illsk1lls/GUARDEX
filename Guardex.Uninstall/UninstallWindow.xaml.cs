@@ -23,18 +23,31 @@ public partial class UninstallWindow : Window
 		Close();
 	}
 
-	void OnRemove(object sender, RoutedEventArgs e)
+	async void OnRemove(object sender, RoutedEventArgs e)
 	{
 		if (_busy) return;
 		_busy = true;
+		var data = DataBox.IsChecked == true;
+		var rules = RulesBox.IsChecked == true;
+		Choices.Visibility = Visibility.Collapsed;
+		CancelButton.Visibility = Visibility.Collapsed;
+		Bar.Visibility = Visibility.Visible;
+		Bar.Value = 0;
 		RemoveButton.IsEnabled = false;
-		DataBox.IsEnabled = false;
-		RulesBox.IsEnabled = false;
+		Intro.Text = "Removing GUARDEX from this PC.";
+		StepText.Text = "0%  Starting.";
+		var progress = new Progress<(int Done, int Total, string Text)>(tick =>
+		{
+			var pct = UninstallWork.Percent(tick.Done, tick.Total);
+			Bar.Value = pct;
+			StepText.Text = pct + "%  " + tick.Text;
+		});
 		try
 		{
-			StepText.Text = "Removing GUARDEX.";
-			UninstallWork.Remove(DataBox.IsChecked == true, RulesBox.IsChecked == true);
-			StepText.Text = "GUARDEX is removed.";
+			await Task.Run(() => UninstallWork.Remove(data, rules, progress));
+			Bar.Value = 100;
+			StepText.Text = "100%  GUARDEX is removed.";
+			Intro.Text = "GUARDEX has been removed from this PC. The .NET runtime and WebView2 are still installed.";
 			RemoveButton.Content = "Close";
 			RemoveButton.IsEnabled = true;
 			_busy = false;
@@ -44,9 +57,10 @@ public partial class UninstallWindow : Window
 		catch (Exception ex)
 		{
 			StepText.Text = ex.Message;
+			Intro.Text = "Removal stopped.";
 			RemoveButton.IsEnabled = true;
-			DataBox.IsEnabled = true;
-			RulesBox.IsEnabled = true;
+			CancelButton.Visibility = Visibility.Visible;
+			Choices.Visibility = Visibility.Visible;
 			_busy = false;
 		}
 	}

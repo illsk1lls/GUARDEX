@@ -36,17 +36,41 @@ static class UninstallWork
 		return "";
 	}
 
-	public static void Remove(bool data, bool rules)
+	public readonly record struct Step(string Text, Action Work);
+
+	public static IReadOnlyList<string> Plan(bool data, bool rules) => Steps(data, rules).Select(step => step.Text).ToList();
+
+	public static int Percent(int done, int total)
 	{
-		StopApps();
-		if (data) RestoreTelemetry();
-		if (rules) RemoveRules();
-		if (data) DeleteData();
-		RemoveLinks();
-		RemoveTask();
-		RemoveCert(ReadThumb());
-		RemoveKey();
-		ScheduleDelete(InstallDir());
+		if (total <= 0 || done >= total) return 100;
+		if (done <= 0) return 0;
+		return (int)Math.Round(100.0 * done / total);
+	}
+
+	public static void Remove(bool data, bool rules, IProgress<(int Done, int Total, string Text)>? progress = null)
+	{
+		var steps = Steps(data, rules);
+		var total = steps.Count;
+		for (var i = 0; i < steps.Count; i++)
+		{
+			progress?.Report((i, total, steps[i].Text));
+			steps[i].Work();
+		}
+		progress?.Report((total, total, "GUARDEX is removed."));
+	}
+
+	static List<Step> Steps(bool data, bool rules)
+	{
+		var steps = new List<Step> { new("Stopping GUARDEX.", StopApps) };
+		if (data) steps.Add(new("Putting diagnostic settings back.", RestoreTelemetry));
+		if (rules) steps.Add(new("Removing firewall rules.", () => RemoveRules()));
+		if (data) steps.Add(new("Removing GUARDEX data for this account.", DeleteData));
+		steps.Add(new("Removing shortcuts.", RemoveLinks));
+		steps.Add(new("Removing the sign-in task.", RemoveTask));
+		steps.Add(new("Removing the signing certificate.", () => RemoveCert(ReadThumb())));
+		steps.Add(new("Removing the uninstall entry.", RemoveKey));
+		steps.Add(new("Removing the program files.", () => ScheduleDelete(InstallDir())));
+		return steps;
 	}
 
 	static void StopApps()
