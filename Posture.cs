@@ -276,15 +276,42 @@ sealed class PostureWatch
 			if (old.Severity == "block" && finding.Severity != "block" && old.Judge == "malicious")
 				finding.Severity = "block";
 		}
+		ApplyNamePatterns(sweep.Findings, prior);
 		_store.SetFindings(sweep.Findings, sweep.Status);
 		foreach (var finding in sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0 && !prior.ContainsKey(f.Id)).Take(3))
 			_judge.Notice("host", finding.Id, HostFact(finding));
 		var batch = sweep.Findings.Where(f => f.Severity == "watch" && f.Judge.Length == 0).Take(6).ToList();
 		if (batch.Count > 0 && _judge.Ready)
 			_ = Task.Run(() => _judge.ReviewHostAsync(batch, ct));
-		var fresh = sweep.Findings.Where(f => f.Severity == "block" && _announced.Add(f.Id)).ToList();
+		var fresh = sweep.Findings.Where(f => f.Severity == "block" && !f.Reason.StartsWith("Matched ", StringComparison.Ordinal) && _announced.Add(f.Id)).ToList();
 		if (fresh.Count == 1) Alerted?.Invoke(fresh[0].Name + ". " + fresh[0].Why);
 		else if (fresh.Count > 1) Alerted?.Invoke(fresh.Count + " start items need a look. First: " + fresh[0].Name + ".");
+	}
+
+	void ApplyNamePatterns(List<Finding> findings, Dictionary<string, Finding> prior)
+	{
+		foreach (var finding in findings)
+		{
+			var verdict = HostNames.Verdict(finding.Name);
+			var wild = HostNames.Wildcard(finding.Name);
+			if (verdict == "block")
+			{
+				var unseen = !prior.ContainsKey(finding.Id);
+				finding.Severity = "block";
+				finding.Judge = "malicious";
+				if (finding.Reason.Length == 0 && wild != null)
+				{
+					finding.Reason = "Matched " + wild + ", which you already said was not you.";
+					if (unseen) _store.Note(finding.Name + " matched " + wild + " and was blocked.");
+				}
+			}
+			else if (verdict == "allow" && finding.Judge.Length == 0)
+			{
+				finding.Judge = "benign";
+				if (finding.Reason.Length == 0 && wild != null)
+					finding.Reason = "Matched " + wild + ", which you already said was you.";
+			}
+		}
 	}
 
 	static string HostFact(Finding finding)

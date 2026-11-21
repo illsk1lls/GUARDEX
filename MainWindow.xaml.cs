@@ -38,11 +38,18 @@ public partial class MainWindow : Window
 	public event Action<bool>? TelemetryRequested;
 	bool _telemetryOn = true;
 	bool _telemetryBusy;
+	bool _acking;
+	bool _ackShown;
+	string _ackLine = "";
+	DateTime _ackUntil;
 
 	public MainWindow(SessionStore store)
 	{
 		_store = store;
 		InitializeComponent();
+		if (!Telemetry.Elevated()) AdminBanner.Visibility = Visibility.Visible;
+		HostsBox.Text = Telemetry.HostEditorText();
+		TelemetryDetail.Text = Telemetry.CatalogText();
 		SourceInitialized += (_, _) =>
 		{
 			var source = (HwndSource?)PresentationSource.FromVisual(this);
@@ -73,10 +80,26 @@ public partial class MainWindow : Window
 		ConnectButton.Content = busy ? "Connecting" : "Connect";
 	}
 
+	public void ShowRecorded(string line)
+	{
+		_acking = true;
+		_ackUntil = DateTime.UtcNow.AddMilliseconds(1100);
+		_ackLine = line;
+		AskBar.Visibility = Visibility.Visible;
+		AskText.Text = line;
+		AskText.Foreground = _green;
+		AskSubject.Visibility = Visibility.Collapsed;
+		AskYes.IsEnabled = false;
+		AskNo.IsEnabled = false;
+	}
+
 	public void RefreshNow()
 	{
+		var ack = _acking && DateTime.UtcNow < _ackUntil;
+		if (_acking && !ack) _acking = false;
 		var gen = _store.Generation;
-		if (gen == _gen && _gen >= 0) return;
+		if (gen == _gen && _gen >= 0 && ack == _ackShown) return;
+		_ackShown = ack;
 		_gen = gen;
 		var dash = _store.Copy();
 		PaintChip(TcpChip, "TCP", dash.Tcp);
@@ -92,15 +115,30 @@ public partial class MainWindow : Window
 			_ => "Reporting"
 		};
 		EnforceState.Foreground = _blocking ? _green : dash.Enforce == "needs admin" ? _amber : _muted;
-		AskBar.Visibility = dash.Ask.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-		AskText.Text = dash.Ask;
-		AskSubject.Text = dash.AskSubject;
-		AskSubject.Visibility = dash.AskSubject.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+		if (ack)
+		{
+			AskBar.Visibility = Visibility.Visible;
+			AskText.Text = _ackLine;
+			AskText.Foreground = _green;
+			AskSubject.Visibility = Visibility.Collapsed;
+			AskYes.IsEnabled = false;
+			AskNo.IsEnabled = false;
+		}
+		else
+		{
+			AskBar.Visibility = dash.Ask.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+			AskText.Text = dash.Ask;
+			AskText.ClearValue(TextBlock.ForegroundProperty);
+			AskSubject.Text = dash.AskSubject;
+			AskSubject.Visibility = dash.AskSubject.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+			AskYes.IsEnabled = true;
+			AskNo.IsEnabled = true;
+		}
 		RemoteBanner.Visibility = dash.Banner.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		RemoteBannerText.Text = dash.Banner;
-		NavBlocks.Content = dash.BlockCount == 0 ? "Blocks" : "Blocks  " + dash.BlockCount;
-		NavHost.Content = dash.FindingCount == 0 ? "Host" : "Host  " + dash.FindingCount;
-		NavRemote.Content = dash.RemoteHits == 0 ? "Remote" : "Remote  " + dash.RemoteHits;
+		NavBlocks.Content = CountLabel("Blocks", dash.BlockCount);
+		NavHost.Content = CountLabel("Host", dash.FindingCount);
+		NavRemote.Content = CountLabel("Remote", dash.RemoteHits);
 		PaintNav();
 		PostureStatus.Text = dash.Posture;
 		RemoteHead.Text = !dash.StopUnlisted
@@ -184,11 +222,12 @@ public partial class MainWindow : Window
 
 	void PaintNav()
 	{
-		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavRemote, NavLog })
+		foreach (var button in new[] { NavTraffic, NavBlocks, NavHost, NavTelemetry, NavRemote, NavLog })
 		{
 			var on = button == NavTraffic && _page == "traffic"
 				|| button == NavBlocks && _page == "blocks"
 				|| button == NavHost && _page == "host"
+				|| button == NavTelemetry && _page == "telemetry"
 				|| button == NavRemote && _page == "remote"
 				|| button == NavLog && _page == "log";
 			button.Background = on ? _navOn : _navOff;
@@ -201,6 +240,7 @@ public partial class MainWindow : Window
 		TrafficPage.Visibility = page == "traffic" ? Visibility.Visible : Visibility.Collapsed;
 		BlocksPage.Visibility = page == "blocks" ? Visibility.Visible : Visibility.Collapsed;
 		HostPage.Visibility = page == "host" ? Visibility.Visible : Visibility.Collapsed;
+		TelemetryPage.Visibility = page == "telemetry" ? Visibility.Visible : Visibility.Collapsed;
 		RemotePage.Visibility = page == "remote" ? Visibility.Visible : Visibility.Collapsed;
 		LogPage.Visibility = page == "log" ? Visibility.Visible : Visibility.Collapsed;
 		PaintNav();
@@ -264,6 +304,7 @@ public partial class MainWindow : Window
 	{
 		if (sender == NavBlocks) Show("blocks");
 		else if (sender == NavHost) Show("host");
+		else if (sender == NavTelemetry) Show("telemetry");
 		else if (sender == NavRemote) Show("remote");
 		else if (sender == NavLog) Show("log");
 		else Show("traffic");
@@ -286,9 +327,35 @@ public partial class MainWindow : Window
 		TelemetryRequested?.Invoke(on);
 	}
 
+	void OnSaveHosts(object sender, RoutedEventArgs e)
+	{
+		HostsNote.Text = Telemetry.SaveHostList(HostsBox.Text);
+		ReloadHosts();
+		if (_telemetryOn && !_telemetryBusy)
+		{
+			SetTelemetry(true, "Applying the telemetry block.", true);
+			TelemetryRequested?.Invoke(true);
+		}
+	}
+
+	void OnResetHosts(object sender, RoutedEventArgs e)
+	{
+		HostsNote.Text = Telemetry.ResetHostList();
+		ReloadHosts();
+		if (_telemetryOn && !_telemetryBusy)
+		{
+			SetTelemetry(true, "Applying the telemetry block.", true);
+			TelemetryRequested?.Invoke(true);
+		}
+	}
+
+	void ReloadHosts() => HostsBox.Text = Telemetry.HostEditorText();
+
 	void OnAskYes(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(true);
 
 	void OnAskNo(object sender, RoutedEventArgs e) => AskAnswered?.Invoke(false);
+
+	static string CountLabel(string name, int count) => count == 0 ? name : name + " (" + count + ")";
 
 	void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 

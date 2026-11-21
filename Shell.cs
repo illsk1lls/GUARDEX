@@ -23,6 +23,12 @@ sealed class Shell
 	[DllImport("user32.dll")]
 	static extern bool MessageBeep(uint type);
 
+	[DllImport("user32.dll")]
+	static extern IntPtr MonitorFromPoint(Point pt, uint flags);
+
+	[DllImport("shcore.dll")]
+	static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
+
 	public Shell()
 	{
 		_judge = new LocalJudge(_store);
@@ -68,8 +74,12 @@ sealed class Shell
 		_window.AllowChanged += (id, on) => _remote.SetAllowed(id, on);
 		_window.AllowNoneRequested += () => _remote.AllowNone();
 		_window.StopUnlistedRequested += on => _remote.SetStopEnabled(on);
-		_window.AskAnswered += yes => _judge.Answer(yes);
-		_flyout.AskAnswered += yes => _judge.Answer(yes);
+		_window.AskAnswered += yes => Record(yes);
+		_flyout.AskAnswered += yes => Record(yes);
+		_flyout.AckFinished += () =>
+		{
+			if (_flyout.IsVisible) _flyout.SetEnabled(_enabled, _store.Copy());
+		};
 		_window.TelemetryRequested += QueueTelemetry;
 		_enforcer.Start();
 		_window.SetTelemetry(Telemetry.Wanted(), Telemetry.Wanted() ? "Checking the telemetry block." : "Telemetry blocking is off.", Telemetry.Wanted());
@@ -97,7 +107,9 @@ sealed class Shell
 		System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
 		{
 			_icon.BalloonTipTitle = "GUARDEX";
-			_icon.BalloonTipText = "GUARDEX is running";
+			_icon.BalloonTipText = Telemetry.Elevated()
+				? "GUARDEX is running"
+				: "GUARDEX is running without administrator. Firewall rules, telemetry changes, and stopping a service are limited.";
 			_icon.BalloonTipIcon = ToolTipIcon.Info;
 			_icon.ShowBalloonTip(3000);
 		}));
@@ -112,13 +124,63 @@ sealed class Shell
 		}
 		_flyout.SetEnabled(_enabled, _store.Copy());
 		_flyout.ShowEndpoint(_judge.BaseUrl, _judge.Ready);
-		var area = System.Windows.SystemParameters.WorkArea;
 		var cursor = Cursor.Position;
-		_flyout.Left = Math.Clamp(cursor.X - _flyout.Width + 24, area.Left + 8, area.Right - _flyout.Width - 8);
-		_flyout.Top = cursor.Y - _flyout.Height - 8;
-		if (_flyout.Top < area.Top) _flyout.Top = cursor.Y + 8;
+		var work = Screen.FromPoint(cursor).WorkingArea;
+		var (sx, sy) = DpiScale(cursor);
+		var maxH = Math.Max(220.0, (work.Height - 16) / sy);
+		var maxW = Math.Max(280.0, (work.Width - 16) / sx);
+		_flyout.MaxWidth = 800;
+		_flyout.MaxHeight = 800;
+		_flyout.Width = Math.Min(320, maxW);
+		_flyout.Height = Math.Min(440, maxH);
+		_flyout.MaxWidth = maxW;
+		_flyout.MaxHeight = maxH;
 		_flyout.Show();
+		_flyout.UpdateLayout();
+		var dipW = _flyout.ActualWidth > 1 ? _flyout.ActualWidth : _flyout.Width;
+		var dipH = _flyout.ActualHeight > 1 ? _flyout.ActualHeight : _flyout.Height;
+		var pxW = dipW * sx;
+		var pxH = dipH * sy;
+		var left = cursor.X - pxW + 24 * sx;
+		var top = cursor.Y - pxH - 8 * sy;
+		if (top < work.Top) top = cursor.Y + 8 * sy;
+		if (left < work.Left + 4) left = work.Left + 4;
+		if (left + pxW > work.Right - 4) left = Math.Max(work.Left + 4, work.Right - pxW - 4);
+		if (top + pxH > work.Bottom - 4) top = Math.Max(work.Top + 4, work.Bottom - pxH - 4);
+		if (top < work.Top) top = work.Top;
+		var source = System.Windows.PresentationSource.FromVisual(_flyout);
+		if (source?.CompositionTarget != null)
+		{
+			var dip = source.CompositionTarget.TransformFromDevice.Transform(new System.Windows.Point(left, top));
+			_flyout.Left = dip.X;
+			_flyout.Top = dip.Y;
+		}
+		else
+		{
+			_flyout.Left = left / sx;
+			_flyout.Top = top / sy;
+		}
 		_flyout.Activate();
+	}
+
+	static (double X, double Y) DpiScale(Point px)
+	{
+		try
+		{
+			var monitor = MonitorFromPoint(px, 2);
+			if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, 0, out var dx, out var dy) == 0 && dx >= 96 && dy >= 96)
+				return (dx / 96.0, dy / 96.0);
+		}
+		catch { }
+		return (1, 1);
+	}
+
+	void Record(bool yes)
+	{
+		var line = AskAck.Line(yes, _store.Copy().AskSubject);
+		_window.ShowRecorded(line);
+		_flyout.ShowRecorded(line);
+		_judge.Answer(yes);
 	}
 
 	void ShowWindow()
@@ -190,6 +252,7 @@ sealed class Shell
 		app.Dispatcher.Invoke(() =>
 		{
 			ShowEndpoints();
+			if (_flyout.IsVisible) _flyout.SetEnabled(_enabled, _store.Copy());
 			if (!note.Alert || note.Text.Length == 0) return;
 			MessageBeep(0x30);
 			var text = note.Text;

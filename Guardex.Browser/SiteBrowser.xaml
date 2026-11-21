@@ -200,7 +200,7 @@
     <Border x:Name="AskBar" Grid.Row="3" Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="0,1,0,1" Padding="12,8">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <TextBox x:Name="AskPhrase" Width="280" Height="32" Margin="8,0,0,0" Visibility="Collapsed"/>
+          <TextBox x:Name="AskPhrase" Width="280" Height="32" Margin="8,0,0,0" VerticalContentAlignment="Center" Visibility="Collapsed"/>
           <Button x:Name="AskOpen" Content="Open" Margin="8,0,0,0" Click="OnAskOpen"/>
           <Button x:Name="AskSave" Content="Save" Margin="8,0,0,0" Click="OnAskSave" Visibility="Collapsed"/>
           <Button Content="Cancel" Margin="8,0,0,0" Click="OnAskCancel"/>

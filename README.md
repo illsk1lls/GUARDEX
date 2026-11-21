@@ -2,7 +2,7 @@
 
 Host defense for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask you what it is looking at, with the actual item on screen.
 
-The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX for the window: Traffic, Blocks, Host, Remote, and Log. Web pages and torrents are a separate program, GUARDEX Browser.
+The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX for the window: Traffic, Blocks, Host, Telemetry, Remote, and Log. Host, Blocks, and Remote show a count in parentheses when that list is not empty, as in Host (4). Web pages and torrents are a separate program, GUARDEX Browser.
 
 A local model connects from the flyout or the main window.
 
@@ -30,7 +30,9 @@ The same lines are written to `%LocalAppData%\Guardex\log.txt` and kept across r
 
 When one new event shows up, GUARDEX asks right away. It does not wait for a score to pile up. The question is yes or no, in the window and in the tray panel. Under the question is the thing it means: for a startup item, the kind, name, location, and command; for a download, the program and who started it; for a new address, the score and why it was noticed. The tray balloon includes that same detail. If the model shortens the question, the detail stays.
 
-Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays either way.
+Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays either way. The panel and the window answer the click with Saved and the item you answered, and the buttons stay quiet for a moment. That stays up even when the next question looks almost the same.
+
+A startup name that contains a changing id, such as `msedge_cleanup_{...}`, is remembered from the part that stays still. No on one of those also blocks the next name with a different id in that same place. Yes remembers it the other way, so the next one is not asked. A later no replaces the yes. The startup entry itself is not deleted.
 
 ## Model
 
@@ -50,15 +52,17 @@ The model does not run commands. It does not lift a hard signal, such as the can
 
 GUARDEX checks startup folders, Run and RunOnce keys, services, scheduled tasks, Winlogon, image-file hijacks, AppInit and AppCert DLLs, LSA packages, logon scripts, and WMI consumers. Findings are reported. Nothing in those locations is deleted or disabled.
 
-The first sweep records what is already there and does not mark it. An item that appears later stays in the list until a later sweep no longer sees it. It is not added to the baseline just because a sweep ran.
+The first sweep records what is already there and does not mark it. An item that appears later stays in the list until a later sweep no longer sees it. It is not added to the baseline just because a sweep ran. A name you already answered that only differs by a changing id is treated as that same answer.
 
 ## Telemetry
 
-GUARDEX blocks Windows diagnostic reporting when the process is elevated. The switch is on the Host page and is on by default. Turn it off there to put the previous settings back.
+GUARDEX blocks Windows diagnostic reporting when the process is elevated. The switch is on the Telemetry page and is on by default. Turn it off there to put the previous settings back.
+
+That page lists the diagnostic programs, services, and tasks the block covers, and the host names written into the hosts file. The host list can be edited, one name per line. The edited list is saved under `%LocalAppData%\Guardex`. Names for Windows Update, Defender, and sign-in are rejected and are not written. The programs, services, and tasks stay fixed.
 
 The block is a marked section in the hosts file, outbound firewall rules for the Windows compatibility and error-reporting programs, and a disabled start for the diagnostic services and tasks that send those reports. Those services and tasks are disabled, not deleted. The previous start type and policy values are saved under `%LocalAppData%\Guardex` and restored when the switch is turned off. A finding in the startup list is still only a report. This switch does not delete or disable arbitrary startup items.
 
-Windows Update, Microsoft Defender, and sign-in are left running. Microsoft account settings sync uses one of the blocked hosts, so that sync may stop while the block is on. Without elevation the status says so and nothing is changed.
+Windows Update, Microsoft Defender, and sign-in are left running. Microsoft account settings sync uses one of the blocked hosts, so that sync may stop while the block is on. Without elevation the status says so and the hosts file, firewall, services, and tasks are left unchanged. A saved host list is applied the next time the block runs elevated.
 
 ## Remote tools
 
@@ -117,7 +121,7 @@ dotnet run
 
 Building needs the [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). Running a build that is not self-contained needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). GUARDEX Browser needs the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-Run elevated for firewall rules, the telemetry block, HTTP.sys request paths, and stopping a remote-access service. Without elevation, connections and findings are still reported.
+Run elevated for firewall rules, the telemetry block, HTTP.sys request paths, and stopping a remote-access service. If it is not elevated, GUARDEX says so at startup: those actions are limited, and connections and findings are still reported.
 
 `dotnet run -- --check` runs the tray rule self-checks. `dotnet run --project Guardex.Browser -- --check` runs the browser checks. `dotnet run -- --posture` prints a startup sweep and does not save the baseline. `dotnet run --project Guardex.Browser` opens the browser.
 

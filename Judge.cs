@@ -174,9 +174,29 @@ sealed class LocalJudge
 		if (kind == "client") AnswerClient(id, yes, named);
 		else if (kind == "host")
 		{
+			var findings = _store.CopyFindings();
+			var current = findings.FirstOrDefault(f => f.Id == id);
 			if (yes) _store.ApplyHostJudge(id, "benign", "You said this was you.", "watch");
 			else _store.ApplyHostJudge(id, "malicious", "You said this was not you.", "block");
 			_store.Note(yes ? "You said this was you: " + named + "." : "You said this was not you: " + named + ".");
+			var wild = current == null ? null : HostNames.Wildcard(current.Name);
+			if (current != null && wild != null)
+			{
+				HostNames.Remember(current.Name, !yes);
+				var core = HostNames.Core(current.Name);
+				var siblings = new List<string>();
+				foreach (var other in findings)
+				{
+					if (other.Id == id || HostNames.Core(other.Name) != core) continue;
+					siblings.Add(other.Id);
+					if (yes) _store.ApplyHostJudge(other.Id, "benign", "You said this was you.", "watch");
+					else _store.ApplyHostJudge(other.Id, "malicious", "You said this was not you.", "block");
+				}
+				DropHostAsks(siblings);
+				_store.Note(yes
+					? "Future names matching " + wild + " will be treated as you."
+					: "Future names matching " + wild + " will be blocked.");
+			}
 		}
 		else if (!yes && kind is "launch" or "flow") StopNamed(id);
 		else _store.Note(yes ? "You said this was you: " + named + ". It was left as it is." : "You said this was not you: " + named + ".");
@@ -223,6 +243,24 @@ sealed class LocalJudge
 		_store.Note(stopped
 			? "Stopped " + bare + ". You said that was not you."
 			: "You said that was not you. " + bare + " was not still running from a download or temp folder.");
+	}
+
+	void DropHostAsks(List<string> ids)
+	{
+		if (ids.Count == 0) return;
+		var skip = new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
+		lock (_askGate)
+		{
+			var kept = new Queue<(string Kind, string Id, string Fact)>();
+			while (_askWait.Count > 0)
+			{
+				var item = _askWait.Dequeue();
+				if (item.Kind == "host" && skip.Contains(item.Id)) continue;
+				kept.Enqueue(item);
+			}
+			while (kept.Count > 0) _askWait.Enqueue(kept.Dequeue());
+			foreach (var id in skip) _askSeen.Add("host|" + id);
+		}
 	}
 
 	void NextAsk()

@@ -190,20 +190,95 @@ static class Telemetry
 		if (RulePrefix.StartsWith("GUARDEX ", StringComparison.Ordinal)) failures.Add("firewall prefix");
 		if (Policies.Any(p => p.Name is "DisableAntiSpyware" or "DisableRealtimeMonitoring" or "DisableWindowsUpdate" or "NoAutoUpdate" or "DisableLocation"))
 			failures.Add("policy");
-		var block = RenderHosts();
+		var block = RenderList(Hosts);
 		if (!block.StartsWith(Begin, StringComparison.Ordinal) || !block.Contains(End, StringComparison.Ordinal)) failures.Add("markers");
 		if (!block.Contains("0.0.0.0 vortex.data.microsoft.com", StringComparison.Ordinal)) failures.Add("v4 vortex");
 		if (!block.Contains("::1 vortex.data.microsoft.com", StringComparison.Ordinal)) failures.Add("v6 vortex");
 		if (block.Contains("windowsupdate", StringComparison.OrdinalIgnoreCase) || block.Contains("login.live.com", StringComparison.OrdinalIgnoreCase))
 			failures.Add("hosts leaked");
 		var prior = "127.0.0.1 localhost\r\n";
-		var once = MergeHosts(prior, true);
-		var twice = MergeHosts(once, true);
+		var once = MergeText(prior, true, block);
+		var twice = MergeText(once, true, block);
 		if (CountOf(twice, Begin) != 1 || CountOf(twice, End) != 1) failures.Add("hosts duplicated");
-		var cleared = MergeHosts(twice, false);
+		var cleared = MergeText(twice, false, block);
 		if (cleared.Contains(Begin, StringComparison.Ordinal) || !cleared.Contains("localhost", StringComparison.Ordinal))
 			failures.Add("hosts undo");
+		var temp = Path.Combine(Path.GetTempPath(), "guardex-hostedit-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			Directory.CreateDirectory(temp);
+			var sample = string.Join('\n', new[]
+			{
+				"vortex.data.microsoft.com",
+				"0.0.0.0 settings-win.data.microsoft.com",
+				"windowsupdate.microsoft.com",
+				"download.windowsupdate.com",
+				"foo.update.microsoft.com",
+				"login.live.com",
+				"login.microsoftonline.com",
+				"win10.ipv6.microsoft.com",
+				"corp.sts.microsoft.com",
+				"foo.wdcp.microsoft.com",
+				"not a host",
+				"localhost",
+				"settings-win.data.microsoft.com"
+			});
+			var message = WriteHostList(sample, Path.Combine(temp, "telemetry-hosts.txt"));
+			var written = File.ReadAllLines(Path.Combine(temp, "telemetry-hosts.txt"));
+			if (written.Length != 2 || written.Any(ForbiddenHost)) failures.Add("host edit");
+			if (!written.Contains("vortex.data.microsoft.com") || !written.Contains("settings-win.data.microsoft.com"))
+				failures.Add("host edit kept");
+			if (!message.Contains("Left out", StringComparison.Ordinal)) failures.Add("host edit note");
+			var custom = RenderList(written);
+			if (custom.Contains("windowsupdate", StringComparison.OrdinalIgnoreCase) || custom.Contains("login.live.com", StringComparison.OrdinalIgnoreCase))
+				failures.Add("custom leaked");
+			if (!custom.Contains("0.0.0.0 settings-win.data.microsoft.com", StringComparison.Ordinal))
+				failures.Add("custom settings");
+		}
+		catch (Exception ex)
+		{
+			failures.Add(ex.Message);
+		}
+		finally
+		{
+			try { Directory.Delete(temp, true); } catch { }
+		}
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
+	}
+
+	public static string HostEditorText() => string.Join(Environment.NewLine, EffectiveHosts());
+
+	public static string CatalogText()
+	{
+		var sb = new StringBuilder();
+		sb.AppendLine("Programs blocked from calling out");
+		foreach (var name in Programs) sb.AppendLine(name);
+		sb.AppendLine();
+		sb.AppendLine("Services set to disabled");
+		foreach (var name in Services) sb.AppendLine(name);
+		sb.AppendLine();
+		sb.AppendLine("Tasks set to disabled");
+		foreach (var name in Tasks) sb.AppendLine(name);
+		return sb.ToString().TrimEnd();
+	}
+
+	public static string SaveHostList(string text) => WriteHostList(text, HostListPath());
+
+	public static string ResetHostList()
+	{
+		try
+		{
+			var path = HostListPath();
+			if (File.Exists(path)) File.Delete(path);
+		}
+		catch (Exception ex)
+		{
+			return ex.Message;
+		}
+		var message = "Restored the built-in telemetry hosts.";
+		if (!Elevated())
+			message += " The hosts file changes when GUARDEX is run as administrator and the block is on.";
+		return message;
 	}
 
 	static bool ForbiddenHost(string host)
@@ -250,12 +325,14 @@ static class Telemetry
 		return on ? "Hosts list is in place." : "Hosts list was removed.";
 	}
 
-	static string MergeHosts(string text, bool include)
+	static string MergeHosts(string text, bool include) => MergeText(text, include, RenderHosts());
+
+	static string MergeText(string text, bool include, string rendered)
 	{
 		var stripped = Strip(text).TrimEnd();
 		if (!include) return stripped.Length == 0 ? "" : stripped + Environment.NewLine;
 		if (stripped.Length > 0) stripped += Environment.NewLine;
-		return stripped + RenderHosts() + Environment.NewLine;
+		return stripped + rendered + Environment.NewLine;
 	}
 
 	static string Strip(string text)
@@ -270,17 +347,103 @@ static class Telemetry
 		return text.Remove(begin, end - begin);
 	}
 
-	static string RenderHosts()
+	static string RenderHosts() => RenderList(EffectiveHosts());
+
+	static string RenderList(IEnumerable<string> hosts)
 	{
 		var sb = new StringBuilder();
 		sb.Append(Begin).Append('\n');
-		foreach (var host in Hosts)
+		foreach (var host in hosts)
 		{
+			if (!ValidHost(host) || ForbiddenHost(host)) continue;
 			sb.Append("0.0.0.0 ").Append(host).Append('\n');
 			sb.Append("::1 ").Append(host).Append('\n');
 		}
 		sb.Append(End);
 		return sb.ToString();
+	}
+
+	static IReadOnlyList<string> EffectiveHosts()
+	{
+		var path = HostListPath();
+		if (!File.Exists(path)) return Hosts;
+		try { return ParseHostEdit(File.ReadAllText(path)).Kept; }
+		catch { return Hosts; }
+	}
+
+	static string WriteHostList(string text, string path)
+	{
+		var edit = ParseHostEdit(text);
+		var dir = Path.GetDirectoryName(path);
+		if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+		File.WriteAllLines(path, edit.Kept);
+		return FormatHostSave(edit);
+	}
+
+	static string FormatHostSave(HostEdit edit)
+	{
+		var message = edit.Kept.Count == 0
+			? "Saved. No telemetry hosts will be written."
+			: "Saved " + edit.Kept.Count + " telemetry host" + (edit.Kept.Count == 1 ? "" : "s") + ".";
+		if (edit.Rejected.Count > 0)
+		{
+			message += " Left out: " + string.Join(", ", edit.Rejected.Take(6)) + ".";
+			message += " Windows Update, Defender, and sign-in names are not blocked.";
+		}
+		if (!Elevated())
+			message += " The hosts file changes when GUARDEX is run as administrator and the block is on.";
+		return message;
+	}
+
+	readonly record struct HostEdit(IReadOnlyList<string> Kept, IReadOnlyList<string> Rejected);
+
+	static HostEdit ParseHostEdit(string text)
+	{
+		var kept = new List<string>();
+		var rejected = new List<string>();
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var raw in (text ?? "").Split('\r', '\n'))
+		{
+			var host = NormalizeHost(raw);
+			if (host.Length == 0) continue;
+			if (kept.Count >= 200)
+			{
+				rejected.Add(host);
+				continue;
+			}
+			if (!ValidHost(host) || ForbiddenHost(host) || !seen.Add(host))
+			{
+				if (!seen.Contains(host)) rejected.Add(host);
+				continue;
+			}
+			kept.Add(host);
+		}
+		return new HostEdit(kept, rejected);
+	}
+
+	static string NormalizeHost(string line)
+	{
+		line = line.Trim();
+		if (line.Length == 0 || line.StartsWith('#')) return "";
+		var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+		if (parts.Length == 2 && (parts[0] is "0.0.0.0" or "::1" or "127.0.0.1")) return parts[1].Trim();
+		return parts.Length == 1 ? parts[0] : line;
+	}
+
+	static bool ValidHost(string host)
+	{
+		if (host.Length == 0 || host.Length > 253 || !host.Contains('.')) return false;
+		if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
+		if (System.Net.IPAddress.TryParse(host, out _)) return false;
+		if (host.StartsWith('.') || host.EndsWith('.') || host.Contains("..", StringComparison.Ordinal)) return false;
+		foreach (var label in host.Split('.'))
+		{
+			if (label.Length == 0 || label.Length > 63) return false;
+			if (label.StartsWith('-') || label.EndsWith('-')) return false;
+			foreach (var c in label)
+				if (!(char.IsAsciiLetterOrDigit(c) || c == '-')) return false;
+		}
+		return true;
 	}
 
 	static string BlockPrograms()
@@ -536,6 +699,8 @@ static class Telemetry
 
 	static string HostsPath() => Path.Combine(Environment.SystemDirectory, "drivers", "etc", "hosts");
 
+	static string HostListPath() => Path.Combine(Dir(), "telemetry-hosts.txt");
+
 	static dynamic Firewall()
 	{
 		var type = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
@@ -543,7 +708,7 @@ static class Telemetry
 		return Activator.CreateInstance(type) ?? throw new InvalidOperationException("Firewall API is unavailable.");
 	}
 
-	static bool Elevated()
+	public static bool Elevated()
 	{
 		try
 		{

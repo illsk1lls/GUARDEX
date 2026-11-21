@@ -23,58 +23,63 @@
     </Border.Effect>
     <Grid>
       <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <StackPanel Orientation="Horizontal">
-        <Path Width="18" Height="22" Stretch="Fill" Fill="#8FB573" Data="M9,0 L18,3.5 L16.5,12 L9,22 L1.5,12 L0,3.5 Z" Margin="0,0,10,0" VerticalAlignment="Center"/>
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel>
-          <TextBlock Text="GUARDEX" FontSize="16" FontWeight="SemiBold" Foreground="#E4ECDF"/>
-          <TextBlock Text="This machine" Foreground="#8EA088" FontSize="12"/>
-        </StackPanel>
-      </StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <Path Width="18" Height="22" Stretch="Fill" Fill="#8FB573" Data="M9,0 L18,3.5 L16.5,12 L9,22 L1.5,12 L0,3.5 Z" Margin="0,0,10,0" VerticalAlignment="Center"/>
+            <StackPanel>
+              <TextBlock Text="GUARDEX" FontSize="16" FontWeight="SemiBold" Foreground="#E4ECDF"/>
+              <TextBlock Text="This machine" Foreground="#8EA088" FontSize="12"/>
+            </StackPanel>
+          </StackPanel>
 
-      <Grid Grid.Row="1" Margin="0,16,0,0">
-        <StackPanel>
-          <TextBlock Text="Protection" Foreground="#E4ECDF" FontSize="14"/>
-          <TextBlock x:Name="StateLine" Text="On" Foreground="#8FB573" FontSize="12" Margin="0,2,0,0"/>
-        </StackPanel>
-        <Border x:Name="Track" Width="46" Height="26" CornerRadius="13" Background="#3F6B45"
-                HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OnToggle">
-          <Ellipse x:Name="Knob" Width="20" Height="20" Fill="#E4ECDF" HorizontalAlignment="Right" Margin="3"/>
-        </Border>
-      </Grid>
+          <Grid Margin="0,16,0,0">
+            <StackPanel>
+              <TextBlock Text="Protection" Foreground="#E4ECDF" FontSize="14"/>
+              <TextBlock x:Name="StateLine" Text="On" Foreground="#8FB573" FontSize="12" Margin="0,2,0,0"/>
+            </StackPanel>
+            <Border x:Name="Track" Width="46" Height="26" CornerRadius="13" Background="#3F6B45"
+                    HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OnToggle">
+              <Ellipse x:Name="Knob" Width="20" Height="20" Fill="#E4ECDF" HorizontalAlignment="Right" Margin="3"/>
+            </Border>
+          </Grid>
 
-      <StackPanel Grid.Row="2" Margin="0,14,0,0">
-        <DockPanel LastChildFill="True">
-          <TextBlock x:Name="ReadyMark" DockPanel.Dock="Right" Text="✓" FontSize="16" Margin="8,0,0,0"
-                     VerticalAlignment="Center" Foreground="#8FB573" Visibility="Collapsed"/>
-          <TextBox x:Name="Endpoint" Height="28" VerticalContentAlignment="Center" Padding="6,0"
-                   Background="#121611" Foreground="#E4ECDF" BorderBrush="#2C3828" FontSize="12"
-                   LostFocus="OnEndpointLostFocus"/>
-        </DockPanel>
-        <Button x:Name="ConnectButton" Content="Connect" Click="OnConnect" Margin="0,8,0,0" HorizontalAlignment="Left"
-                Background="#273222" Foreground="#E4ECDF" BorderBrush="#2C3828" Padding="12,4" Cursor="Hand"/>
-      </StackPanel>
+          <StackPanel Margin="0,14,0,0">
+            <DockPanel LastChildFill="True">
+              <TextBlock x:Name="ReadyMark" DockPanel.Dock="Right" Text="✓" FontSize="16" Margin="8,0,0,0"
+                         VerticalAlignment="Center" Foreground="#8FB573" Visibility="Collapsed"/>
+              <TextBox x:Name="Endpoint" Height="28" VerticalContentAlignment="Center" Padding="6,0"
+                       Background="#121611" Foreground="#E4ECDF" BorderBrush="#2C3828" FontSize="12"
+                       LostFocus="OnEndpointLostFocus"/>
+            </DockPanel>
+            <Button x:Name="ConnectButton" Content="Connect" Click="OnConnect" Margin="0,8,0,0" HorizontalAlignment="Left"
+                    Background="#273222" Foreground="#E4ECDF" BorderBrush="#2C3828" Padding="12,4" Cursor="Hand"/>
+          </StackPanel>
 
-      <StackPanel Grid.Row="3" Margin="0,12,0,0">
-        <StackPanel x:Name="AskRow" Visibility="Collapsed" Margin="0,0,0,8">
-          <TextBlock x:Name="AskText" TextWrapping="Wrap" Foreground="#E4ECDF" FontSize="12"/>
-          <TextBlock x:Name="AskSubject" TextWrapping="Wrap" Foreground="#8EA088" FontFamily="Consolas" FontSize="12" Margin="0,4,0,0"/>
-          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-            <Button Content="Yes" Click="OnAskYes" Margin="0,0,8,0" Padding="12,4"/>
-            <Button Content="No" Click="OnAskNo" Padding="12,4"/>
+          <StackPanel Margin="0,12,0,0">
+            <StackPanel x:Name="AskRow" Visibility="Collapsed" Margin="0,0,0,8">
+              <TextBlock x:Name="AskText" TextWrapping="Wrap" Foreground="#E4ECDF" FontSize="12"/>
+              <TextBlock x:Name="AskSubject" TextWrapping="Wrap" Foreground="#8EA088" FontFamily="Consolas" FontSize="12" Margin="0,4,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#8EA088" FontSize="12"
+                       Text="Watching inbound connections."/>
+            <TextBlock x:Name="AdminLine" TextWrapping="Wrap" Foreground="#E0C080" FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"
+                       Text="Not running as administrator. Firewall rules, telemetry changes, and stopping a service are limited."/>
           </StackPanel>
         </StackPanel>
-        <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#8EA088" FontSize="12"
-                   Text="Watching inbound connections."/>
+      </ScrollViewer>
+
+      <StackPanel x:Name="AskButtons" Orientation="Horizontal" Grid.Row="1" Margin="0,12,0,0" Visibility="Collapsed">
+        <Button x:Name="YesButton" Content="Yes" Click="OnAskYes" Margin="0,0,8,0" Padding="12,4"/>
+        <Button x:Name="NoButton" Content="No" Click="OnAskNo" Padding="12,4"/>
       </StackPanel>
 
-      <DockPanel Grid.Row="4" Margin="0,14,0,0">
+      <DockPanel Grid.Row="2" Margin="0,14,0,0">
         <Button x:Name="ExitButton" Content="Exit" DockPanel.Dock="Right" Click="OnExit"
                 Background="Transparent" Foreground="#8EA088" BorderThickness="0" Padding="8,4" Cursor="Hand"/>
         <Button Content="Open GUARDEX" Click="OnOpen" HorizontalAlignment="Left"

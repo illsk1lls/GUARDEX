@@ -143,8 +143,8 @@
       <Border x:Name="AskBar" Visibility="Collapsed" Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,10,0,0">
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
-            <Button Content="Yes" Click="OnAskYes" Margin="0,0,8,0"/>
-            <Button Content="No" Click="OnAskNo"/>
+            <Button x:Name="AskYes" Content="Yes" Click="OnAskYes" Margin="0,0,8,0"/>
+            <Button x:Name="AskNo" Content="No" Click="OnAskNo"/>
           </StackPanel>
           <StackPanel>
             <TextBlock x:Name="AskText" TextWrapping="Wrap"/>
@@ -158,14 +158,20 @@
       </DockPanel>
     </StackPanel>
 
+    <Border x:Name="AdminBanner" DockPanel.Dock="Top" Visibility="Collapsed" Background="#3A3424" CornerRadius="6" Padding="10,8" Margin="18,0,18,12">
+      <TextBlock TextWrapping="Wrap" Foreground="#E0C080"
+                 Text="GUARDEX is not running as administrator. Firewall rules, the telemetry hosts, services, and tasks, and stopping a remote-access service need administrator. Connections and findings are still reported."/>
+    </Border>
+
     <Border x:Name="RemoteBanner" DockPanel.Dock="Top" Visibility="Collapsed" Background="#3A2424" CornerRadius="6" Padding="10,8" Margin="18,0,18,12">
       <TextBlock x:Name="RemoteBannerText" TextWrapping="Wrap" Foreground="#F0C9C9"/>
     </Border>
 
-    <StackPanel DockPanel.Dock="Left" Width="148" Margin="18,0,14,18">
+    <StackPanel DockPanel.Dock="Left" Width="160" Margin="18,0,14,18">
       <Button x:Name="NavTraffic" Content="Traffic" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavBlocks" Content="Blocks" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavHost" Content="Host" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
+      <Button x:Name="NavTelemetry" Content="Telemetry" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavRemote" Content="Remote" Click="OnNav" Margin="0,0,0,6" HorizontalContentAlignment="Left"/>
       <Button x:Name="NavLog" Content="Log" Click="OnNav" HorizontalContentAlignment="Left"/>
     </StackPanel>
@@ -259,18 +265,10 @@
     <Grid x:Name="HostPage" Visibility="Collapsed">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
-      <StackPanel Margin="0,0,0,12">
-        <TextBlock Text="TELEMETRY" Foreground="#8EA088" Margin="0,0,0,8"/>
-        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
-                   Text="Windows diagnostic reporting is blocked while this is on. Windows Update and Defender stay on. Microsoft account settings sync may stop."/>
-        <Button x:Name="TelemetryButton" Content="Turn off" HorizontalAlignment="Left" Click="OnTelemetry"/>
-        <TextBlock x:Name="TelemetryStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,8,0,0" Text="Checking the telemetry block."/>
-      </StackPanel>
-      <TextBlock x:Name="PostureStatus" Grid.Row="1" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8"/>
-      <Grid Grid.Row="2">
+      <TextBlock x:Name="PostureStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8"/>
+      <Grid Grid.Row="1">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="1.25*"/>
           <ColumnDefinition Width="12"/>
@@ -305,6 +303,44 @@
         <DockPanel Grid.Column="2">
           <TextBlock DockPanel.Dock="Top" Text="DETAIL" Foreground="#8EA088" Margin="0,0,0,8"/>
           <TextBox x:Name="HostDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+        </DockPanel>
+      </Grid>
+    </Grid>
+
+    <Grid x:Name="TelemetryPage" Visibility="Collapsed">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <StackPanel Margin="0,0,0,12">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Windows diagnostic reporting is blocked while this is on. Windows Update and Defender stay on. Microsoft account settings sync may stop."/>
+        <Button x:Name="TelemetryButton" Content="Turn off" HorizontalAlignment="Left" Click="OnTelemetry"/>
+        <TextBlock x:Name="TelemetryStatus" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,8,0,0" Text="Checking the telemetry block."/>
+      </StackPanel>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="1.15*"/>
+          <ColumnDefinition Width="12"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <DockPanel Grid.Column="0">
+          <TextBlock DockPanel.Dock="Top" Text="HOSTS" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
+                     Text="One host name per line. These are written into the hosts file while the block is on. Windows Update, Defender, and sign-in names are left out."/>
+          <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="Reset" Click="OnResetHosts" Margin="8,0,0,0"/>
+              <Button Content="Save" Click="OnSaveHosts" Margin="8,0,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="HostsNote" Foreground="#8EA088" TextWrapping="Wrap" VerticalAlignment="Center"/>
+          </DockPanel>
+          <TextBox x:Name="HostsBox" AcceptsReturn="True" FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap"
+                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+        </DockPanel>
+        <DockPanel Grid.Column="2">
+          <TextBlock DockPanel.Dock="Top" Text="ALSO BLOCKED" Foreground="#8EA088" Margin="0,0,0,8"/>
+          <TextBox x:Name="TelemetryDetail" IsReadOnly="True" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
         </DockPanel>
       </Grid>
     </Grid>
