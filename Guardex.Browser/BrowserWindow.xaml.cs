@@ -1,6 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using Guardex.Tunnel;
 
@@ -17,6 +19,9 @@ public partial class BrowserWindow : Window
 	bool _allowClose;
 	bool _iconTunnel;
 	bool _iconArmed;
+	bool _cover;
+	bool _raisedForPage;
+	WindowState _stateBeforePage;
 	string _notice = "";
 	DateTime _noticeUntil;
 	Icon? _currentIcon;
@@ -37,9 +42,15 @@ public partial class BrowserWindow : Window
 		{
 			if (e.Button == MouseButtons.Left) ShowFromTray();
 		};
+		SourceInitialized += (_, _) =>
+		{
+			var source = (HwndSource?)PresentationSource.FromVisual(this);
+			source?.AddHook(WindowProc);
+		};
 		Pages.MinimizeRequested += () => WindowState = WindowState.Minimized;
 		Pages.MaximizeRequested += () =>
 			WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+		Pages.PageFullChanged += OnPageFull;
 		Pages.CloseRequested += Close;
 		Pages.TunnelToggleRequested += OnVpn;
 		Pages.TunnelImportRequested += OnImport;
@@ -230,6 +241,94 @@ public partial class BrowserWindow : Window
 	{
 		_allowClose = true;
 		Close();
+	}
+
+	void OnPageFull(bool full)
+	{
+		_cover = full;
+		if (full)
+		{
+			_stateBeforePage = WindowState;
+			_raisedForPage = WindowState != WindowState.Maximized;
+			if (_raisedForPage) WindowState = WindowState.Maximized;
+			else NudgeMax();
+			return;
+		}
+		if (_raisedForPage)
+		{
+			_raisedForPage = false;
+			WindowState = WindowState.Normal;
+			return;
+		}
+		NudgeMax();
+	}
+
+	void NudgeMax()
+	{
+		if (WindowState != WindowState.Maximized) return;
+		WindowState = WindowState.Normal;
+		WindowState = WindowState.Maximized;
+	}
+
+	// A page fullscreen covers the monitor. A normal maximize stays in the work area.
+	IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+	{
+		const int WmGetMinMaxInfo = 0x0024;
+		if (msg != WmGetMinMaxInfo) return IntPtr.Zero;
+		var info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+		var monitor = MonitorFromWindow(hwnd, 2);
+		var screen = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+		if (!GetMonitorInfo(monitor, ref screen)) return IntPtr.Zero;
+		var area = screen.rcMonitor;
+		var work = _cover ? area : screen.rcWork;
+		info.ptMaxPosition.X = work.Left - area.Left;
+		info.ptMaxPosition.Y = work.Top - area.Top;
+		info.ptMaxSize.X = work.Right - work.Left;
+		info.ptMaxSize.Y = work.Bottom - work.Top;
+		Marshal.StructureToPtr(info, lParam, true);
+		handled = true;
+		return IntPtr.Zero;
+	}
+
+	[DllImport("user32.dll")]
+	static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+	[DllImport("user32.dll", CharSet = CharSet.Auto)]
+	static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct PointWin
+	{
+		public int X;
+		public int Y;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct MinMaxInfo
+	{
+		public PointWin ptReserved;
+		public PointWin ptMaxSize;
+		public PointWin ptMaxPosition;
+		public PointWin ptMinTrackSize;
+		public PointWin ptMaxTrackSize;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct RectWin
+	{
+		public int Left;
+		public int Top;
+		public int Right;
+		public int Bottom;
+	}
+
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+	struct MonitorInfo
+	{
+		public int cbSize;
+		public RectWin rcMonitor;
+		public RectWin rcWork;
+		public int dwFlags;
 	}
 
 	void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)

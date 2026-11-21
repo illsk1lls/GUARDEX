@@ -1,13 +1,34 @@
+using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Windows.Media;
 
 namespace Guardex;
 
-public sealed class SiteVisit
+public sealed class SiteVisit : INotifyPropertyChanged
 {
+	ImageSource? _icon;
 	public string Utc { get; set; } = "";
 	public string Title { get; set; } = "";
 	public string Url { get; set; } = "";
+
+	[JsonIgnore]
+	public ImageSource? Icon
+	{
+		get => _icon;
+		set
+		{
+			if (_icon == value) return;
+			_icon = value;
+			PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
+		}
+	}
+
+	[JsonIgnore]
+	public string Mark => Favicon.Letter(Url);
+
+	public event PropertyChangedEventHandler? PropertyChanged;
 
 	public string When
 	{
@@ -167,6 +188,53 @@ static class SiteDesk
 		}
 	}
 
+	public static (int Start, int Length) UrlToken(string? text, int index)
+	{
+		var value = text ?? "";
+		if (value.Length == 0 || index < 0) return (0, 0);
+		if (index >= value.Length) index = value.Length - 1;
+		if (IsUrlBreak(value[index]))
+		{
+			if (index > 0 && !IsUrlBreak(value[index - 1])) index--;
+			else return (index, 1);
+		}
+		var start = index;
+		while (start > 0 && !IsUrlBreak(value[start - 1])) start--;
+		var end = index + 1;
+		while (end < value.Length && !IsUrlBreak(value[end])) end++;
+		return (start, end - start);
+	}
+
+	public static List<SiteVisit> Suggest(IEnumerable<SiteVisit> bookmarks, IEnumerable<SiteVisit> history, string? query, int limit = 8)
+	{
+		var needle = (query ?? "").Trim();
+		var found = new List<SiteVisit>();
+		if (needle.Length == 0 || limit <= 0) return found;
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		void Take(IEnumerable<SiteVisit> items)
+		{
+			foreach (var item in items)
+			{
+				if (found.Count >= limit) return;
+				if (!IsPage(item.Url) || !seen.Add(item.Url)) continue;
+				if (item.Url.Contains(needle, StringComparison.OrdinalIgnoreCase)
+					|| (item.Title ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase))
+					found.Add(item);
+			}
+		}
+		var marks = bookmarks.Where(item => Starts(item, needle)).Concat(bookmarks.Where(item => !Starts(item, needle)));
+		var past = history.Where(item => Starts(item, needle)).Concat(history.Where(item => !Starts(item, needle)));
+		Take(marks);
+		Take(past);
+		return found;
+	}
+
+	static bool Starts(SiteVisit item, string needle) =>
+		item.Url.StartsWith(needle, StringComparison.OrdinalIgnoreCase)
+		|| (item.Title ?? "").StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+
+	static bool IsUrlBreak(char ch) => " \t\r\n/\\?#&=.:@%+~,;".Contains(ch);
+
 	public static string OneLine(string? text)
 	{
 		if (string.IsNullOrWhiteSpace(text)) return "";
@@ -215,6 +283,27 @@ static class SiteDesk
 		if (Path.GetFileName(nested) != "notepad.exe") failures.Add("download traversal " + nested);
 		if (IsInside(dir, Path.Combine("C:", "Users", "a", "Downloads2", "a.bin"))) failures.Add("sibling folder");
 		if (!IsInside(dir, Path.Combine(dir, "a.bin"))) failures.Add("inside downloads");
+
+		const string sample = "https://en.wikipedia.org/wiki/Cat";
+		var host = UrlToken(sample, sample.IndexOf("wikipedia", StringComparison.Ordinal));
+		if (sample.Substring(host.Start, host.Length) != "wikipedia") failures.Add("token host");
+		var path = UrlToken(sample, sample.IndexOf("Cat", StringComparison.Ordinal));
+		if (sample.Substring(path.Start, path.Length) != "Cat") failures.Add("token path");
+		var scheme = UrlToken(sample, 2);
+		if (sample.Substring(scheme.Start, scheme.Length) != "https") failures.Add("token scheme");
+		if (UrlToken("", 0).Length != 0) failures.Add("token empty");
+
+		var bookmarks = new List<SiteVisit>
+		{
+			new() { Title = "Example", Url = "https://example.com/a" },
+			new() { Title = "Other", Url = "https://other.test/" }
+		};
+		var past = new List<SiteVisit> { new() { Title = "Old example", Url = "https://example.com/old" } };
+		var hits = Suggest(bookmarks, past, "exam", 8);
+		if (hits.Count != 2 || hits[0].Url != "https://example.com/a" || hits[1].Url != "https://example.com/old")
+			failures.Add("suggest " + string.Join(",", hits.Select(item => item.Url)));
+		if (Suggest(bookmarks, past, "   ", 8).Count != 0) failures.Add("suggest blank");
+		if (Suggest(bookmarks, past, "missing", 8).Count != 0) failures.Add("suggest miss");
 
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}

@@ -348,7 +348,7 @@
     <Grid x:Name="LogPage" Visibility="Collapsed">
       <DockPanel>
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
-                   Text="Events stay here after they leave the other pages. A block that expires, a model timeout, and an answer you gave are kept on this PC."/>
+                   Text="Events stay here after they leave the other pages. A block that expires, a model timeout, and a confirmation are kept on this PC."/>
         <TextBox x:Name="LogBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap"
                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
       </DockPanel>
@@ -363,7 +363,7 @@
       </Grid.RowDefinitions>
       <TextBlock x:Name="RemoteHead" TextWrapping="Wrap" Margin="0,0,0,8"/>
       <TextBlock Grid.Row="1" TextWrapping="Wrap" Foreground="#8EA088" Margin="0,0,0,8"
-                 Text="None of these are allowed until you check them. A checked tool is left alone. The list is the whole match. A normal program is not on it. A full-screen fake update is how some of these tools hide, so GUARDEX watches the tool."/>
+                 Text="None of these are allowed until you check them. A checked tool is left alone. The list is the whole match. A normal program is not on it. Some of these tools cover the screen with a fake update. GUARDEX matches the tool."/>
       <DockPanel Grid.Row="2" Margin="0,0,0,8">
         <Button DockPanel.Dock="Right" Content="Allow none" Click="OnAllowNone"/>
         <CheckBox x:Name="StopUnlisted" Content="Stop unlisted tools" IsChecked="True" Click="OnStopToggle" VerticalAlignment="Center"/>

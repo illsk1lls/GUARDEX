@@ -7,12 +7,25 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using ListBox = System.Windows.Controls.ListBox;
 using UserControl = System.Windows.Controls.UserControl;
 using Button = System.Windows.Controls.Button;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
+using Image = System.Windows.Controls.Image;
+using Point = System.Windows.Point;
+using Rect = System.Windows.Rect;
+using Brushes = System.Windows.Media.Brushes;
+using Cursors = System.Windows.Input.Cursors;
+using Binding = System.Windows.Data.Binding;
+using FontFamily = System.Windows.Media.FontFamily;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using VerticalAlignment = System.Windows.VerticalAlignment;
 using TorrentRow = Guardex.Browser.TorrentRow;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -87,15 +100,19 @@ public sealed class DownloadRow : INotifyPropertyChanged
 	public string Name { get => _name; set { if (_name == value) return; _name = value; Changed(nameof(Name)); } }
 	public string Detail { get => _detail; set { if (_detail == value) return; _detail = value; Changed(nameof(Detail)); } }
 	public double Fraction { get => _fraction; set { if (Math.Abs(_fraction - value) < 0.001) return; _fraction = value; Changed(nameof(Fraction)); } }
+	public bool Running => _running;
 	public Visibility CancelVisibility => _running ? Visibility.Visible : Visibility.Collapsed;
-	public Visibility FolderVisibility => _folder ? Visibility.Visible : Visibility.Collapsed;
+	public Visibility BarVisibility => _running ? Visibility.Visible : Visibility.Collapsed;
+	public Visibility FolderVisibility => string.IsNullOrWhiteSpace(Path) ? Visibility.Collapsed : Visibility.Visible;
 
 	public void SetChrome(bool running, bool folder)
 	{
 		if (_running == running && _folder == folder) return;
 		_running = running;
 		_folder = folder;
+		Changed(nameof(Running));
 		Changed(nameof(CancelVisibility));
+		Changed(nameof(BarVisibility));
 		Changed(nameof(FolderVisibility));
 	}
 
@@ -147,6 +164,10 @@ public partial class SiteBrowser : UserControl
 	readonly List<string> _closed = [];
 	readonly HashSet<string> _reserved = new(StringComparer.OrdinalIgnoreCase);
 	static readonly SolidColorBrush NavOn = MakeBrush(0x27, 0x32, 0x22);
+	static readonly SolidColorBrush TileFace = MakeBrush(0x27, 0x32, 0x22);
+	static readonly SolidColorBrush Ink = MakeBrush(0xE4, 0xEC, 0xDF);
+	static readonly SolidColorBrush PanelBrush = MakeBrush(0x1B, 0x21, 0x19);
+	static readonly SolidColorBrush LineBrush = MakeBrush(0x2C, 0x38, 0x28);
 	CoreWebView2Environment? _env;
 	PendingAsk? _currentAsk;
 	int _proxyPort;
@@ -154,6 +175,9 @@ public partial class SiteBrowser : UserControl
 	bool _historyOpen;
 	bool _callsOpen;
 	bool _downloadsOpen;
+	bool _ringSpin;
+	long _popupUntil;
+	DownloadRow? _openRow;
 	bool _menuOpen;
 	bool _settingsOpen;
 	bool _findOpen;
@@ -163,6 +187,13 @@ public partial class SiteBrowser : UserControl
 	string _findTerm = "";
 	SiteTab? _findTab;
 	Task _adQueue = Task.CompletedTask;
+	bool _pageFull;
+	bool _bookBar = true;
+	bool _addressLock;
+	bool _addressSelectAll;
+	int _suggestPick = -1;
+	Point _addressDown;
+	HomeShortcut? _homeEdit;
 
 	public SiteBrowser()
 	{
@@ -170,10 +201,16 @@ public partial class SiteBrowser : UserControl
 		TabList.ItemsSource = _tabs;
 		CallList.ItemsSource = _links;
 		DownloadList.ItemsSource = _downloads;
-		_downloads.CollectionChanged += (_, _) => PaintDownloadEmpty();
+		_downloads.CollectionChanged += (_, _) =>
+		{
+			PaintDownloadEmpty();
+			PaintDownloadButton();
+		};
 		DownloadFolderText.Text = DownloadsDirectory();
-		TorrentFolderText.Text = TorrentDesk.SaveRoot;
-		AskHint.Text = "Type " + TorrentDesk.Phrase + " to use this PC's network.";
+		AskHint.Text = "Type " + TorrentDesk.Phrase + ". This choice is remembered.";
+		LoadBookBar();
+		HomeDesk.Load();
+		PaintHome();
 		ShowSection("general");
 		AdBlock.Shared.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
 		{
@@ -187,6 +224,7 @@ public partial class SiteBrowser : UserControl
 
 	public event Action? MinimizeRequested;
 	public event Action? MaximizeRequested;
+	public event Action<bool>? PageFullChanged;
 	public event Action? CloseRequested;
 	public event Action? TunnelToggleRequested;
 	public event Action? TunnelImportRequested;
@@ -219,6 +257,7 @@ public partial class SiteBrowser : UserControl
 			var torrent = _downloads[i].Torrent;
 			if (torrent != null && !TorrentDesk.Items.Contains(torrent)) _downloads.RemoveAt(i);
 		}
+		PaintDownloadButton();
 	}
 
 	public void UseProxy(int port)
@@ -237,6 +276,7 @@ public partial class SiteBrowser : UserControl
 			_history.AddRange(SiteDesk.ReadVisits(ReadFile(HistoryFile), SiteDesk.HistoryMax));
 			_bookmarks.AddRange(SiteDesk.ReadVisits(ReadFile(BookmarkFile), SiteDesk.BookmarkMax));
 			FillLists();
+			PaintHome();
 			var urls = SiteDesk.ReadSession(ReadFile(SessionFile));
 			if (urls.Count == 0)
 			{
@@ -372,6 +412,14 @@ public partial class SiteBrowser : UserControl
 		core.HistoryChanged += (_, _) => { if (tab == Active) PaintChrome(); };
 		core.StatusBarTextChanged += (_, _) => { if (tab == Active) SetHover(core.StatusBarText ?? ""); };
 		core.ContainsFullScreenElementChanged += (_, _) => { if (tab == Active) PaintChrome(); };
+		core.FaviconChanged += (_, _) => _ = StoreIcon(core);
+		view.GotFocus += (_, _) =>
+		{
+			if (tab != Active || PopupHeld()) return;
+			CloseMenu();
+			CloseDownloads();
+			CloseSuggest();
+		};
 		core.WindowCloseRequested += (_, _) => Dispatcher.BeginInvoke(() => CloseTab(tab));
 		core.NewWindowRequested += (_, args) =>
 		{
@@ -437,9 +485,14 @@ public partial class SiteBrowser : UserControl
 				try { core.RemoveScriptToExecuteOnDocumentCreated(tab.AdScriptId); } catch { }
 				tab.AdScriptId = "";
 			}
-			if (body.Length == 0) continue;
+			if (body.Length == 0)
+			{
+				try { await core.ExecuteScriptAsync("window.__guardexPlayerStop=1;"); } catch { }
+				continue;
+			}
 			try { tab.AdScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(body); }
 			catch { }
+			try { await core.ExecuteScriptAsync(body); } catch { }
 		}
 	}
 
@@ -569,6 +622,7 @@ public partial class SiteBrowser : UserControl
 				}
 				else row.Detail = Size(got);
 			}
+			PaintDownloadButton();
 		}
 		if (Dispatcher.CheckAccess()) Apply();
 		else Dispatcher.BeginInvoke(Apply);
@@ -636,6 +690,23 @@ public partial class SiteBrowser : UserControl
 		}
 		SetNote("");
 		_historyOpen = false;
+		CloseSuggest();
+		core.Navigate(url);
+	}
+
+	void GoUrl(string url)
+	{
+		if (!SiteDesk.IsPage(url)) return;
+		CloseSettings();
+		CloseSuggest();
+		_historyOpen = false;
+		var core = Active?.View.CoreWebView2;
+		if (core == null)
+		{
+			SetNote("The page is not ready.");
+			return;
+		}
+		SetNote("");
 		core.Navigate(url);
 	}
 
@@ -662,6 +733,11 @@ public partial class SiteBrowser : UserControl
 		var tab = Active;
 		var core = tab?.View.CoreWebView2;
 		var full = core?.ContainsFullScreenElement == true;
+		if (full != _pageFull)
+		{
+			_pageFull = full;
+			PageFullChanged?.Invoke(full);
+		}
 		var chrome = full ? Visibility.Collapsed : Visibility.Visible;
 		TabRow.Visibility = chrome;
 		ToolRow.Visibility = chrome;
@@ -669,20 +745,25 @@ public partial class SiteBrowser : UserControl
 		if (full)
 		{
 			HistoryPane.Visibility = Visibility.Collapsed;
+			HomePane.Visibility = Visibility.Collapsed;
+			BookBar.Visibility = Visibility.Collapsed;
 			SettingsPage.Visibility = Visibility.Collapsed;
-			DownloadPane.Visibility = Visibility.Collapsed;
-			MenuPane.Visibility = Visibility.Collapsed;
-			DownloadsColumn.Width = new GridLength(0);
+			MenuPopup.IsOpen = false;
+			DownloadsPopup.IsOpen = false;
+			SuggestPopup.IsOpen = false;
+			HomeProviderPopup.IsOpen = false;
 			ApplyViews(true);
 			return;
 		}
 		SettingsPage.Visibility = _settingsOpen ? Visibility.Visible : Visibility.Collapsed;
-		MenuPane.Visibility = _menuOpen ? Visibility.Visible : Visibility.Collapsed;
-		DownloadPane.Visibility = _downloadsOpen ? Visibility.Visible : Visibility.Collapsed;
-		DownloadsColumn.Width = new GridLength(_downloadsOpen ? 380 : 0);
+		MenuPopup.IsOpen = _menuOpen;
+		DownloadsPopup.IsOpen = _downloadsOpen;
+		BookBar.Visibility = !full && _bookBar && _bookmarks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+		BookBarItem.Content = _bookBar ? "Hide bookmarks bar" : "Show bookmarks bar";
 		var url = core?.Source ?? "";
 		var blank = !SiteDesk.IsPage(url);
-		HistoryPane.Visibility = _settingsOpen ? Visibility.Collapsed : blank || _historyOpen ? Visibility.Visible : Visibility.Collapsed;
+		HomePane.Visibility = !_settingsOpen && blank && !_historyOpen ? Visibility.Visible : Visibility.Collapsed;
+		HistoryPane.Visibility = !_settingsOpen && _historyOpen ? Visibility.Visible : Visibility.Collapsed;
 		ApplyViews(false);
 		BackButton.IsEnabled = core?.CanGoBack == true;
 		ForwardButton.IsEnabled = core?.CanGoForward == true;
@@ -690,7 +771,12 @@ public partial class SiteBrowser : UserControl
 		ReloadButton.Content = loading ? "\uE711" : "\uE72C";
 		ReloadButton.ToolTip = loading ? "Stop" : "Reload";
 		if (!Address.IsKeyboardFocusWithin)
+		{
+			_addressLock = true;
 			Address.Text = SiteDesk.IsPage(url) ? url : "";
+			_addressLock = false;
+			CloseSuggest();
+		}
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
 		StarButton.Content = SiteDesk.IsMarked(_bookmarks, url) ? "\uE735" : "\uE734";
 		PaintZoom();
@@ -699,7 +785,7 @@ public partial class SiteBrowser : UserControl
 
 	void ApplyViews(bool showPage)
 	{
-		var hide = !showPage && (_settingsOpen || HistoryPane.Visibility == Visibility.Visible);
+		var hide = !showPage && (_settingsOpen || HistoryPane.Visibility == Visibility.Visible || HomePane.Visibility == Visibility.Visible);
 		ViewHost.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
 		foreach (var item in _tabs)
 			item.View.Visibility = !hide && item.Selected ? Visibility.Visible : Visibility.Collapsed;
@@ -825,8 +911,12 @@ public partial class SiteBrowser : UserControl
 
 	void FillLists()
 	{
+		foreach (var item in _bookmarks) item.Icon = Favicon.Image(item.Url);
+		foreach (var item in _history) item.Icon = Favicon.Image(item.Url);
 		BookmarkList.ItemsSource = _bookmarks.ToList();
 		HistoryList.ItemsSource = _history.Take(80).ToList();
+		BookBarList.ItemsSource = _bookmarks.ToList();
+		foreach (var item in HomeDesk.Items) item.RefreshIcon();
 	}
 
 	void SetNote(string text)
@@ -913,6 +1003,16 @@ public partial class SiteBrowser : UserControl
 		else if (key == Key.Escape && _currentAsk != null)
 		{
 			FinishAsk(true);
+			handled = true;
+		}
+		else if (key == Key.Escape && HomeEditor.Visibility == Visibility.Visible)
+		{
+			CloseHomeEditor();
+			handled = true;
+		}
+		else if (key == Key.Escape && HomeProviderPopup.IsOpen)
+		{
+			HomeProviderPopup.IsOpen = false;
 			handled = true;
 		}
 		else if (key == Key.Escape && _findOpen)
@@ -1006,25 +1106,41 @@ public partial class SiteBrowser : UserControl
 		else ShowDownloads();
 	}
 
+	void HoldChrome() => _popupUntil = Environment.TickCount64 + 400;
+
+	bool PopupHeld() => Environment.TickCount64 < _popupUntil;
+
 	void ShowDownloads()
 	{
+		HoldChrome();
 		_downloadsOpen = true;
 		_menuOpen = false;
-		MenuPane.Visibility = Visibility.Collapsed;
-		DownloadPane.Visibility = Visibility.Visible;
+		MenuPopup.IsOpen = false;
+		var width = DownloadsButton.ActualWidth;
+		if (width > 0) DownloadsPopup.HorizontalOffset = width - 380;
+		DownloadsPopup.IsOpen = true;
 		PaintDownloadEmpty();
+		PaintDownloadButton();
 	}
 
 	void CloseDownloads()
 	{
 		_downloadsOpen = false;
-		DownloadPane.Visibility = Visibility.Collapsed;
+		DownloadsPopup.IsOpen = false;
+		_openRow = null;
+		DownloadAsk.Visibility = Visibility.Collapsed;
 	}
 
 	void CloseMenu()
 	{
 		_menuOpen = false;
-		MenuPane.Visibility = Visibility.Collapsed;
+		MenuPopup.IsOpen = false;
+	}
+
+	void CloseSuggest()
+	{
+		_suggestPick = -1;
+		SuggestPopup.IsOpen = false;
 	}
 
 	void ToggleStar()
@@ -1090,15 +1206,20 @@ public partial class SiteBrowser : UserControl
 		CloseSettings();
 		ToggleHistory();
 	}
-	void OnDownloadsToggle(object sender, RoutedEventArgs e) => ToggleDownloads();
+	void OnDownloadsToggle(object sender, RoutedEventArgs e)
+	{
+		e.Handled = true;
+		ToggleDownloads();
+	}
 	void OnMenu(object sender, RoutedEventArgs e)
 	{
 		if (_menuOpen) CloseMenu();
 		else
 		{
+			HoldChrome();
 			_menuOpen = true;
 			CloseDownloads();
-			MenuPane.Visibility = Visibility.Visible;
+			MenuPopup.IsOpen = true;
 		}
 	}
 	void OnOpenSettings(object sender, RoutedEventArgs e) => OpenSettings("general");
@@ -1118,13 +1239,109 @@ public partial class SiteBrowser : UserControl
 
 	void OnAddressKey(object sender, KeyEventArgs e)
 	{
+		if (SuggestPopup.IsOpen && e.Key == Key.Down)
+		{
+			_suggestPick = Math.Min(SuggestList.Items.Count - 1, _suggestPick + 1);
+			SuggestList.SelectedIndex = _suggestPick;
+			e.Handled = true;
+			return;
+		}
+		if (SuggestPopup.IsOpen && e.Key == Key.Up)
+		{
+			_suggestPick = Math.Max(-1, _suggestPick - 1);
+			SuggestList.SelectedIndex = _suggestPick;
+			e.Handled = true;
+			return;
+		}
+		if (e.Key == Key.Escape && SuggestPopup.IsOpen)
+		{
+			CloseSuggest();
+			e.Handled = true;
+			return;
+		}
 		if (e.Key != Key.Enter) return;
 		e.Handled = true;
+		if (SuggestPopup.IsOpen && SuggestList.SelectedItem is SiteVisit visit)
+		{
+			CloseSuggest();
+			GoUrl(visit.Url);
+			return;
+		}
+		CloseSuggest();
 		Go();
 	}
 
-	void OnAddressChanged(object sender, TextChangedEventArgs e) =>
+	void OnAddressChanged(object sender, TextChangedEventArgs e)
+	{
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
+		if (_addressLock || !Address.IsKeyboardFocusWithin) return;
+		ShowSuggest();
+	}
+
+	void OnAddressMouseDown(object sender, MouseButtonEventArgs e)
+	{
+		if (e.ClickCount >= 3)
+		{
+			Address.Focus();
+			Address.SelectAll();
+			_addressSelectAll = false;
+			e.Handled = true;
+			return;
+		}
+		if (e.ClickCount == 2)
+		{
+			Address.Focus();
+			var index = Address.GetCharacterIndexFromPoint(e.GetPosition(Address), true);
+			if (index < 0) index = Math.Max(0, Address.CaretIndex);
+			var token = SiteDesk.UrlToken(Address.Text, index);
+			Address.Select(token.Start, token.Length);
+			_addressSelectAll = false;
+			e.Handled = true;
+			return;
+		}
+		_addressSelectAll = !Address.IsKeyboardFocusWithin;
+		_addressDown = e.GetPosition(Address);
+	}
+
+	void OnAddressMouseUp(object sender, MouseButtonEventArgs e)
+	{
+		if (!_addressSelectAll) return;
+		_addressSelectAll = false;
+		var moved = e.GetPosition(Address) - _addressDown;
+		if (Math.Abs(moved.X) > 4 || Math.Abs(moved.Y) > 4) return;
+		var count = Address.Text.Length;
+		if (count == 0) return;
+		Address.Select(count, -count);
+	}
+
+	void ShowSuggest()
+	{
+		var page = Active?.View.CoreWebView2?.Source ?? "";
+		if (string.Equals(Address.Text.Trim(), page, StringComparison.OrdinalIgnoreCase))
+		{
+			CloseSuggest();
+			return;
+		}
+		var items = SiteDesk.Suggest(_bookmarks, _history, Address.Text);
+		if (items.Count == 0)
+		{
+			CloseSuggest();
+			return;
+		}
+		_suggestPick = -1;
+		SuggestList.SelectedIndex = -1;
+		SuggestList.ItemsSource = items;
+		if (SuggestPopup.Child is FrameworkElement child)
+			child.Width = Math.Max(360, AddressHost.ActualWidth);
+		SuggestPopup.IsOpen = true;
+	}
+
+	void OnSuggestClick(object sender, MouseButtonEventArgs e)
+	{
+		if (SuggestList.SelectedItem is not SiteVisit visit) return;
+		CloseSuggest();
+		GoUrl(visit.Url);
+	}
 
 	void OnAddressFocus(object sender, RoutedEventArgs e) =>
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
@@ -1283,34 +1500,187 @@ public partial class SiteBrowser : UserControl
 		if (sender is not FrameworkElement el || el.Tag is not DownloadRow row) return;
 		var dir = DownloadsDirectory();
 		var path = row.Torrent != null ? TorrentDesk.SaveRoot : row.Path;
-		if (!SiteDesk.IsInside(dir, path)) return;
-		var select = File.Exists(path);
-		Process.Start(new ProcessStartInfo
+		if (!SamePath(dir, path) && !SiteDesk.IsInside(dir, path)) return;
+		Reveal(path);
+	}
+
+	void OnOpenDownloadsFolder(object sender, RoutedEventArgs e) => Reveal(DownloadsDirectory());
+
+	void OnOpenDownload(object sender, RoutedEventArgs e)
+	{
+		if (sender is not FrameworkElement el || el.Tag is not DownloadRow row || row.Running || !CanOpen(row)) return;
+		_openRow = row;
+		var path = OpenPath(row);
+		var folder = Directory.Exists(path) && !File.Exists(path);
+		DownloadAskText.Text = folder
+			? "Open the folder for " + row.Name + "?"
+			: IsProgram(path) ? "Run " + row.Name + " on this PC?" : "Open " + row.Name + "?";
+		DownloadAsk.Visibility = Visibility.Visible;
+	}
+
+	void OnApproveOpen(object sender, RoutedEventArgs e)
+	{
+		var row = _openRow;
+		_openRow = null;
+		DownloadAsk.Visibility = Visibility.Collapsed;
+		if (row == null || !CanOpen(row)) return;
+		var path = OpenPath(row);
+		try
 		{
-			FileName = "explorer.exe",
-			Arguments = select ? "/select,\"" + path + "\"" : "\"" + path + "\"",
-			UseShellExecute = true
+			if (File.Exists(path))
+				Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+			else
+				Reveal(path);
+		}
+		catch (Exception ex)
+		{
+			SetNote(ex.Message);
+		}
+	}
+
+	void OnDeclineOpen(object sender, RoutedEventArgs e)
+	{
+		_openRow = null;
+		DownloadAsk.Visibility = Visibility.Collapsed;
+	}
+
+	static string OpenPath(DownloadRow row) => row.Torrent != null ? TorrentDesk.SaveRoot : row.Path;
+
+	bool CanOpen(DownloadRow row)
+	{
+		var path = OpenPath(row);
+		if (string.IsNullOrWhiteSpace(path)) return false;
+		var downloads = DownloadsDirectory();
+		if (SamePath(downloads, path) || SiteDesk.IsInside(downloads, path)) return true;
+		return SiteDesk.IsInside(Path.Combine(Root, "opened-torrents"), path);
+	}
+
+	static bool IsProgram(string path)
+	{
+		var ext = Path.GetExtension(path);
+		return ext.Equals(".exe", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".bat", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".com", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".msi", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".ps1", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".scr", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".js", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".vbs", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".hta", StringComparison.OrdinalIgnoreCase)
+			|| ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+	}
+
+	void PaintDownloadButton()
+	{
+		var active = 0;
+		double sum = 0;
+		var known = 0;
+		foreach (var row in _downloads)
+		{
+			if (!row.Running) continue;
+			active++;
+			if (row.Fraction > 0.001)
+			{
+				sum += row.Fraction;
+				known++;
+			}
+		}
+		var show = active > 0;
+		DownloadTrack.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+		DownloadArc.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+		DownloadBadge.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+		if (!show)
+		{
+			StopRing();
+			return;
+		}
+		DownloadCount.Text = active > 9 ? "9+" : active.ToString(CultureInfo.InvariantCulture);
+		if (known == 0)
+		{
+			SetRing(0.22);
+			StartRing();
+			return;
+		}
+		StopRing();
+		SetRing(sum / known);
+	}
+
+	void SetRing(double fraction)
+	{
+		const double full = Math.PI * 26.0 / 2.0;
+		var draw = Math.Clamp(fraction, 0.04, 1) * full;
+		var gap = Math.Max(0.01, full - draw);
+		DownloadArc.StrokeDashArray = new DoubleCollection { draw, gap };
+	}
+
+	void StartRing()
+	{
+		if (_ringSpin) return;
+		_ringSpin = true;
+		DownloadSpin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(-90, 270, TimeSpan.FromSeconds(1.1))
+		{
+			RepeatBehavior = RepeatBehavior.Forever
 		});
 	}
 
-	void OnOpenDownloadsFolder(object sender, RoutedEventArgs e)
+	void StopRing()
 	{
-		Process.Start(new ProcessStartInfo
+		if (!_ringSpin) return;
+		_ringSpin = false;
+		DownloadSpin.BeginAnimation(RotateTransform.AngleProperty, null);
+		DownloadSpin.Angle = -90;
+	}
+
+	static bool SamePath(string left, string right)
+	{
+		try
 		{
-			FileName = "explorer.exe",
-			Arguments = "\"" + DownloadsDirectory() + "\"",
-			UseShellExecute = true
-		});
+			return string.Equals(Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar),
+				Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar),
+				StringComparison.OrdinalIgnoreCase);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	static void Reveal(string path)
+	{
+		try
+		{
+			if (File.Exists(path))
+			{
+				Process.Start(new ProcessStartInfo
+				{
+					FileName = "explorer.exe",
+					Arguments = "/select,\"" + path + "\"",
+					UseShellExecute = true
+				});
+				return;
+			}
+			var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
+			if (string.IsNullOrWhiteSpace(dir)) return;
+			Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+		}
+		catch
+		{
+		}
 	}
 
 	protected override void OnPreviewMouseUp(MouseButtonEventArgs e)
 	{
 		base.OnPreviewMouseUp(e);
 		if (e.OriginalSource is not DependencyObject source) return;
-		if (_downloadsOpen && !IsWithin(DownloadPane, source) && !IsWithin(DownloadsButton, source))
+		if (!PopupHeld() && _downloadsOpen && !IsWithin(DownloadPane, source) && !IsWithin(DownloadsButton, source))
 			CloseDownloads();
-		if (_menuOpen && !IsWithin(MenuPane, source) && !IsWithin(MenuButton, source))
+		if (!PopupHeld() && _menuOpen && !IsWithin(MenuPane, source) && !IsWithin(MenuButton, source))
 			CloseMenu();
+		if (SuggestPopup.IsOpen && !IsWithin(AddressHost, source) && !IsWithin(SuggestPopup, source))
+			CloseSuggest();
+		if (HomeProviderPopup.IsOpen && !IsWithin(HomeProviderPane, source) && !IsWithin(HomeProviderButton, source))
+			HomeProviderPopup.IsOpen = false;
 	}
 
 	void AskMagnet(string magnet)
@@ -1462,6 +1832,334 @@ public partial class SiteBrowser : UserControl
 			node = VisualTreeHelper.GetParent(node);
 		}
 		return false;
+	}
+
+	void LoadBookBar()
+	{
+		try
+		{
+			var path = Path.Combine(Root, "bookmarks-bar.txt");
+			if (File.Exists(path) && File.ReadAllText(path).Trim() == "0") _bookBar = false;
+		}
+		catch
+		{
+		}
+	}
+
+	void SaveBookBar()
+	{
+		try
+		{
+			Directory.CreateDirectory(Root);
+			File.WriteAllText(Path.Combine(Root, "bookmarks-bar.txt"), _bookBar ? "1" : "0");
+		}
+		catch
+		{
+		}
+	}
+
+	void OnBookBarToggle(object sender, RoutedEventArgs e)
+	{
+		_bookBar = !_bookBar;
+		SaveBookBar();
+		CloseMenu();
+		PaintChrome();
+	}
+
+	void OnBookBarOpen(object sender, RoutedEventArgs e)
+	{
+		if (sender is not Button { Tag: SiteVisit visit }) return;
+		GoUrl(visit.Url);
+	}
+
+	async Task StoreIcon(CoreWebView2 core)
+	{
+		try { await Favicon.Store(core); }
+		catch { }
+		await Dispatcher.InvokeAsync(FillLists);
+	}
+
+	void PaintHome()
+	{
+		HomeProviderButton.Content = HomeDesk.Label(HomeDesk.Provider);
+		HomeWrap.Children.Clear();
+		foreach (var item in HomeDesk.Items)
+			HomeWrap.Children.Add(HomeTile(item));
+		if (HomeDesk.Items.Count < HomeDesk.Max)
+			HomeWrap.Children.Add(HomeAddTile());
+	}
+
+	Button HomeTile(HomeShortcut item)
+	{
+		var mark = new TextBlock
+		{
+			Text = item.Mark,
+			FontFamily = new FontFamily("Segoe UI"),
+			FontSize = 18,
+			HorizontalAlignment = HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			Foreground = Ink,
+			IsHitTestVisible = false
+		};
+		var image = new Image { Width = 48, Height = 48, IsHitTestVisible = false };
+		image.Clip = new EllipseGeometry(new Rect(0, 0, 48, 48));
+		image.SetBinding(Image.SourceProperty, new Binding(nameof(HomeShortcut.Icon)) { Source = item });
+		var face = new Grid { Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Center };
+		face.Children.Add(new System.Windows.Shapes.Ellipse { Width = 48, Height = 48, Fill = TileFace, IsHitTestVisible = false });
+		face.Children.Add(mark);
+		face.Children.Add(image);
+		var name = new TextBlock
+		{
+			FontFamily = new FontFamily("Segoe UI"),
+			FontSize = 12,
+			Foreground = Ink,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			TextAlignment = TextAlignment.Center,
+			HorizontalAlignment = HorizontalAlignment.Center,
+			Margin = new Thickness(0, 8, 0, 0),
+			MaxWidth = 88,
+			IsHitTestVisible = false
+		};
+		name.SetBinding(TextBlock.TextProperty, new Binding(nameof(HomeShortcut.Name)) { Source = item });
+		var body = new StackPanel { Width = 96, Margin = new Thickness(0, 8, 0, 4), IsHitTestVisible = false };
+		body.Children.Add(face);
+		body.Children.Add(name);
+		var more = QuietButton("\uE712", 22);
+		more.HorizontalAlignment = HorizontalAlignment.Right;
+		more.VerticalAlignment = VerticalAlignment.Top;
+		more.Opacity = 0;
+		more.IsHitTestVisible = false;
+		more.ToolTip = "Shortcut";
+		var root = new Grid { Width = 104, Height = 108 };
+		root.Children.Add(body);
+		root.Children.Add(more);
+		var button = QuietButton("", 104);
+		button.Content = root;
+		button.Tag = item;
+		button.Height = 108;
+		button.Margin = new Thickness(4);
+		button.FontFamily = new FontFamily("Segoe UI");
+		button.ToolTip = item.Url;
+		button.Click += (_, _) =>
+		{
+			if (button.Tag is HomeShortcut shortcut) GoUrl(shortcut.Url);
+		};
+		var menu = DarkMenu(
+			("Edit", (_, _) => OpenHomeEditor(item)),
+			("Remove", (_, _) =>
+			{
+				HomeDesk.Remove(item);
+				PaintHome();
+			}));
+		more.ContextMenu = menu;
+		more.Click += (_, args) =>
+		{
+			args.Handled = true;
+			menu.PlacementTarget = more;
+			menu.IsOpen = true;
+		};
+		button.MouseEnter += (_, _) =>
+		{
+			more.Opacity = 1;
+			more.IsHitTestVisible = true;
+		};
+		button.MouseLeave += (_, _) =>
+		{
+			if (menu.IsOpen) return;
+			more.Opacity = 0;
+			more.IsHitTestVisible = false;
+		};
+		menu.Closed += (_, _) =>
+		{
+			if (button.IsMouseOver) return;
+			more.Opacity = 0;
+			more.IsHitTestVisible = false;
+		};
+		return button;
+	}
+
+	Button HomeAddTile()
+	{
+		var plus = new TextBlock
+		{
+			Text = "\uE710",
+			FontFamily = new FontFamily("Segoe MDL2 Assets"),
+			FontSize = 16,
+			Foreground = Ink,
+			HorizontalAlignment = HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			IsHitTestVisible = false
+		};
+		var face = new Grid { Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Center };
+		face.Children.Add(new System.Windows.Shapes.Ellipse { Width = 48, Height = 48, Fill = TileFace, IsHitTestVisible = false });
+		face.Children.Add(plus);
+		var caption = new TextBlock
+		{
+			Text = "Add",
+			FontFamily = new FontFamily("Segoe UI"),
+			FontSize = 12,
+			Foreground = Ink,
+			HorizontalAlignment = HorizontalAlignment.Center,
+			Margin = new Thickness(0, 8, 0, 0),
+			IsHitTestVisible = false
+		};
+		var body = new StackPanel { Width = 96, Margin = new Thickness(0, 8, 0, 4) };
+		body.Children.Add(face);
+		body.Children.Add(caption);
+		var button = QuietButton("", 104);
+		button.Content = body;
+		button.Height = 108;
+		button.Margin = new Thickness(4);
+		button.FontFamily = new FontFamily("Segoe UI");
+		button.ToolTip = "Add a shortcut";
+		button.Click += (_, _) => OpenHomeEditor(null);
+		button.ContextMenu = DarkMenu(
+			("Import", (_, _) => ImportHome()),
+			("Export", (_, _) => ExportHome()),
+			("Remove all", (_, _) =>
+			{
+				HomeDesk.Clear();
+				PaintHome();
+			}));
+		return button;
+	}
+
+	static Button QuietButton(string glyph, double width) => new()
+	{
+		Content = glyph,
+		Width = width,
+		Height = width,
+		Padding = new Thickness(0),
+		Margin = new Thickness(0),
+		Background = Brushes.Transparent,
+		BorderThickness = new Thickness(0),
+		Foreground = Ink,
+		FontFamily = new FontFamily("Segoe MDL2 Assets"),
+		FontSize = 12,
+		Cursor = Cursors.Hand
+	};
+
+	static ContextMenu DarkMenu(params (string Header, RoutedEventHandler Click)[] items)
+	{
+		var menu = new ContextMenu
+		{
+			Background = PanelBrush,
+			Foreground = Ink,
+			BorderBrush = LineBrush
+		};
+		foreach (var item in items)
+		{
+			var entry = new MenuItem { Header = item.Header, Foreground = Ink, Background = Brushes.Transparent };
+			entry.Click += item.Click;
+			menu.Items.Add(entry);
+		}
+		return menu;
+	}
+
+	void OpenHomeEditor(HomeShortcut? item)
+	{
+		_homeEdit = item;
+		HomeEditorTitle.Text = item == null ? "Add shortcut" : "Edit shortcut";
+		HomeName.Text = item?.Name ?? "";
+		HomeUrl.Text = item?.Url ?? "";
+		HomeNote.Text = "";
+		HomeProviderPopup.IsOpen = false;
+		HomeEditor.Visibility = Visibility.Visible;
+		HomeName.Focus();
+	}
+
+	void CloseHomeEditor()
+	{
+		HomeEditor.Visibility = Visibility.Collapsed;
+		_homeEdit = null;
+	}
+
+	void OnHomeCancel(object sender, RoutedEventArgs e) => CloseHomeEditor();
+
+	void OnHomeSave(object sender, RoutedEventArgs e)
+	{
+		var ok = _homeEdit == null
+			? HomeDesk.TryAdd(HomeName.Text, HomeUrl.Text, out var error)
+			: HomeDesk.TryUpdate(_homeEdit, HomeName.Text, HomeUrl.Text, out error);
+		HomeNote.Text = error;
+		if (!ok) return;
+		CloseHomeEditor();
+		PaintHome();
+	}
+
+	void OnHomeFieldKey(object sender, KeyEventArgs e)
+	{
+		if (e.Key != Key.Enter) return;
+		e.Handled = true;
+		OnHomeSave(sender, e);
+	}
+
+	void OnHomeProvider(object sender, RoutedEventArgs e) =>
+		HomeProviderPopup.IsOpen = !HomeProviderPopup.IsOpen;
+
+	void OnHomeProviderPick(object sender, RoutedEventArgs e)
+	{
+		if (sender is Button { Tag: string tag }) HomeDesk.SetProvider(tag);
+		HomeProviderPopup.IsOpen = false;
+		HomeProviderButton.Content = HomeDesk.Label(HomeDesk.Provider);
+	}
+
+	void OnHomeSearch(object sender, RoutedEventArgs e) => RunHomeSearch();
+
+	void OnHomeSearchKey(object sender, KeyEventArgs e)
+	{
+		if (e.Key != Key.Enter) return;
+		e.Handled = true;
+		RunHomeSearch();
+	}
+
+	void RunHomeSearch()
+	{
+		var query = HomeSearch.Text.Trim();
+		if (query.Length == 0) return;
+		CloseHomeEditor();
+		HomeProviderPopup.IsOpen = false;
+		GoUrl(HomeDesk.SearchUrl(HomeDesk.Provider, query));
+	}
+
+	void ImportHome()
+	{
+		var dlg = new Microsoft.Win32.OpenFileDialog
+		{
+			Filter = "Shortcut file|*.json|All files|*.*",
+			Title = "Import shortcuts"
+		};
+		if (dlg.ShowDialog() != true) return;
+		try
+		{
+			HomeDesk.TryImport(File.ReadAllText(dlg.FileName), out var note);
+			HomeNote.Text = note;
+		}
+		catch (Exception ex)
+		{
+			HomeNote.Text = ex.Message;
+		}
+		PaintHome();
+	}
+
+	void ExportHome()
+	{
+		var dlg = new Microsoft.Win32.SaveFileDialog
+		{
+			Filter = "Shortcut file|*.json|All files|*.*",
+			FileName = "home.json",
+			Title = "Export shortcuts"
+		};
+		if (dlg.ShowDialog() != true) return;
+		try
+		{
+			File.WriteAllText(dlg.FileName, HomeDesk.ExportText());
+			HomeNote.Text = "Shortcuts exported.";
+		}
+		catch (Exception ex)
+		{
+			HomeNote.Text = ex.Message;
+		}
 	}
 
 	static SolidColorBrush MakeBrush(byte r, byte g, byte b)

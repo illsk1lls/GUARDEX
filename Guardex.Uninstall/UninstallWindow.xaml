@@ -112,7 +112,7 @@
       <TextBlock x:Name="Intro" TextWrapping="Wrap" LineHeight="20"/>
       <StackPanel x:Name="Choices">
         <CheckBox x:Name="DataBox" Margin="0,16,0,0">
-          <TextBlock TextWrapping="Wrap" MaxWidth="480" Text="Also remove GUARDEX data for this Windows account. The tunnel file, filter lists, browser profile, startup baseline, saved sign-in, and log go with it. Diagnostic settings GUARDEX changed are put back first. Files already saved in Downloads\GUARDEX stay."/>
+          <TextBlock TextWrapping="Wrap" MaxWidth="480" Text="Also remove GUARDEX data for this Windows account. The tunnel file, filter lists, browser profile, startup baseline, saved sign-in, and log go with it. Diagnostic settings GUARDEX changed are put back first. Files already in the Downloads folder stay."/>
         </CheckBox>
         <CheckBox x:Name="RulesBox" Margin="0,12,0,0">
           <TextBlock TextWrapping="Wrap" MaxWidth="480" Text="Also remove firewall rules GUARDEX added, including temporary address blocks and the diagnostic program rules."/>

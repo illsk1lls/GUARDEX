@@ -2,7 +2,7 @@
 
 Host defense for a Windows PC. Rules act as soon as they match. A local model reads the close calls and can ask you what it is looking at, with the actual item on screen.
 
-The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX for the window: Traffic, Blocks, Host, Telemetry, Remote, and Log. Host, Blocks, and Remote show a count in parentheses when that list is not empty, as in Host (4). Web pages and torrents are a separate program, GUARDEX Browser.
+The tray icon opens a small panel. The switch turns inbound watching on and off. Open GUARDEX for the window: Traffic, Blocks, Host, Telemetry, Remote, and Log. Host, Blocks, and Remote show a count in parentheses when that list is not empty. Web pages and torrents are a separate program, GUARDEX Browser.
 
 A local model connects from the flyout or the main window.
 
@@ -22,7 +22,7 @@ Set `GUARDEX_ENFORCE` to `0` to report blocks without creating firewall rules.
 
 ## Log
 
-The Blocks page only shows what is still active. When a hold expires, or the model steps a soft block down, that row leaves the list. The Log page keeps the line: the address, that the block was lifted, and why. A model timeout is recorded there too, as are the answers you give.
+The Blocks page only shows what is still active. When a hold expires, or the model steps a soft block down, that row leaves the list. The Log page keeps the line: the address, that the block was lifted, and why. A model timeout is recorded there too, and so is each confirmation.
 
 The same lines are written to `%LocalAppData%\Guardex\log.txt` and kept across restarts. The file holds the latest 400 lines.
 
@@ -30,7 +30,7 @@ The same lines are written to `%LocalAppData%\Guardex\log.txt` and kept across r
 
 When one new event shows up, GUARDEX asks right away. It does not wait for a score to pile up. The question is yes or no, in the window and in the tray panel. Under the question is the thing it means: for a startup item, the kind, name, location, and command; for a download, the program and who started it; for a new address, the score and why it was noticed. The tray balloon includes that same detail. If the model shortens the question, the detail stays.
 
-Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays either way. The panel and the window answer the click with Saved and the item you answered, and the buttons stay quiet for a moment. That stays up even when the next question looks almost the same.
+Yes steps a normal source down one band, or leaves a download or startup item in place. No steps a normal source up one band, stops a download or temp program that is still running, or marks a startup item block. A hard rule stays either way. After a choice, the panel and the window show Saved and the item, and the buttons stay quiet for a moment so the next question is still readable.
 
 A startup name that contains a changing id, such as `msedge_cleanup_{...}`, is remembered from the part that stays still. No on one of those also blocks the next name with a different id in that same place. Yes remembers it the other way, so the next one is not asked. A later no replaces the yes. The startup entry itself is not deleted.
 
@@ -52,7 +52,7 @@ The model does not run commands. It does not lift a hard signal, such as the can
 
 GUARDEX checks startup folders, Run and RunOnce keys, services, scheduled tasks, Winlogon, image-file hijacks, AppInit and AppCert DLLs, LSA packages, logon scripts, and WMI consumers. Findings are reported. Nothing in those locations is deleted or disabled.
 
-The first sweep records what is already there and does not mark it. An item that appears later stays in the list until a later sweep no longer sees it. It is not added to the baseline just because a sweep ran. A name you already answered that only differs by a changing id is treated as that same answer.
+The first sweep records what is already there and does not mark it. An item that appears later stays in the list until a later sweep no longer sees it. It is not added to the baseline just because a sweep ran. A startup name that only differs by a changing id keeps the earlier allow or block.
 
 ## Telemetry
 
@@ -74,7 +74,7 @@ Incoming Remote Desktop is disconnected only when someone is also signed in at t
 
 ## Page launches
 
-A page script does not receive the filesystem. If the browser starts a shell, a script host, a named scanning tool, or a program from Temp, GUARDEX stops that process. A program opened from Downloads is reported and left running. The user's own terminal is left alone, as are programs that live under the real Windows directory or Program Files. A Temp or Downloads path is not excused because a folder in it is named Windows or Program Files. This check stays on when inbound watching is paused.
+A page script does not receive the filesystem. If the browser starts a shell, a script host, a named scanning tool, or a program from Temp, GUARDEX stops that process. A program opened from Downloads is reported and left running. A shell started outside the browser is left running, as are programs that live under the real Windows directory or Program Files. A Temp or Downloads path is not excused because a folder in it is named Windows or Program Files. This check stays on when inbound watching is paused.
 
 To allow a program by name, add it to `%LocalAppData%\Guardex\launch-allow.txt`. Write `0` to `%LocalAppData%\Guardex\launch-stop.txt` to report without stopping.
 
@@ -86,21 +86,21 @@ A clipboard value that is a wallet address is restored if a different address of
 
 GUARDEX Browser is its own window, with its own tray icon and a desktop shortcut. The icon is the same shield as GUARDEX, with a light bar so the two are easy to tell apart. It is not the Windows default browser, and it does not cover Chrome or Edge. The rest of the PC is not forced through the tunnel. The tray app still guards the machine.
 
-The tabs sit on the top edge of the window. Back, forward, reload, and the address bar are on the row under them. Find, zoom, print, history, and bookmarks are in the menu. Settings is in that menu too, and Ctrl+, opens it. The browser reopens the tabs from the last session. Downloads go to the Downloads folder and are not opened. A program started from there is still only reported. Passwords are not saved. Extensions, sync, and extra profiles are not included.
+The tabs sit on the top edge of the window. Back, forward, reload, and the address bar are on the row under them. A bookmarks bar under that row lists saved sites. A site icon appears after that site has been opened in this browser. Until then the bar shows the site's first letter. The menu can hide the bar. Find, zoom, print, history, and bookmarks are in the menu. Settings is in that menu too, and Ctrl+, opens it. The browser reopens the tabs from the last session. A new tab has a search box and shortcuts. Search uses Google, Bing, or DuckDuckGo. Shortcuts are kept in `%LocalAppData%\Guardex\home.json`. The downloads button opens a list of recent files, with a progress bar while one is active and a count on the button. A folder icon shows that file. Opening a finished file asks first. Files land in the Downloads folder. A program started from there is still only reported. Passwords are not saved. Extensions, sync, and extra profiles are not included.
 
-Favorites can be imported from Chrome, Edge, or Firefox, one browser at a time. If that browser has more than one profile, you pick one profile. Bookmarks you already have stay. Only http and https addresses are kept. The list holds 2000. Import is on the bookmarks page and under Settings, Privacy.
+Favorites can be imported from Chrome, Edge, or Firefox, one browser at a time. If that browser has more than one profile, pick one profile. Bookmarks already in the list stay. Only http and https addresses are kept. The list holds 2000. Import is on the bookmarks page and under Settings, Privacy.
 
 Every page goes through a proxy on this PC. The VPN section of Settings imports a WireGuard or OpenVPN file and turns the tunnel on. While it is on, pages use that tunnel only. If the tunnel drops, pages stop. They do not fall back to the normal network. Turn the tunnel off to browse on this PC's network again. The browser is IPv4. QUIC is off. A site that exists only on IPv6 does not open.
 
-This is the browser's own stack, not a system-wide network lock. A piece of the browser that ignored the proxy could still open a socket. Chrome and Edge are outside it.
+The tunnel covers this browser. Chrome and Edge stay on this PC's network. A part of this browser that skipped the proxy could still open a socket.
 
 Calls the open tab makes are listed from the menu. Same-site files are omitted. A third-party script is shown. A third-party script that then calls a different host is marked, as is a call to a raw IP address. That list is a label. It does not block the request. Form data and response bodies are not read.
 
-Ads and trackers are blocked with EasyList and EasyPrivacy. The lists are downloaded to `%LocalAppData%\Guardex\filters` and refreshed about every four days. They are not part of the program. The address you open is not blocked. Matching scripts, images, frames, and other requests are. Common ad boxes are hidden with a style element in the page. A site that rejects an added style can still have its matching requests blocked. Turn this off under Settings, Privacy. While the tunnel is on, a list update uses the tunnel. If the tunnel is down, the saved lists stay and the update waits.
+Ads and trackers are blocked with EasyList and EasyPrivacy. The lists are downloaded to `%LocalAppData%\Guardex\filters` and refreshed about every four days. They are not part of the program. The page address is not blocked. Matching scripts, images, frames, and other requests are. Common ad boxes are hidden with a style element in the page. On YouTube, in-player ads are skipped and ad slots are hidden. The video keeps playing. A site that rejects an added style can still have its matching requests blocked. Turn this off under Settings, Privacy. While the tunnel is on, a list update uses the tunnel. If the tunnel is down, the saved lists stay and the update waits.
 
 ## Torrents
 
-A magnet link asks before it opens. A .torrent file asks whether to open it or save it. An opened torrent shows a progress bar with the other downloads. With the tunnel on, opening one sends it through the tunnel, and it stops if the tunnel drops. With the tunnel off, type `allow torrents on this network` in that prompt to use this PC's network. Files from an opened torrent land in Downloads\GUARDEX. Stopping one leaves the files on disk.
+A magnet link asks before it opens. A .torrent file asks whether to open it or save it. An opened torrent shows a progress bar with the other downloads and saves into the Downloads folder, the same place as other files. With the tunnel on, the transfer uses the tunnel. Turning the tunnel off stops it, unless this PC's network was already confirmed. That confirmation is asked once, by typing `allow torrents on this network`, and then it is remembered. Stopping a transfer leaves the files on disk.
 
 ## Packages
 
@@ -141,7 +141,7 @@ The setup then:
 
 The downloads are the official Microsoft links `https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe` and `https://go.microsoft.com/fwlink/p/?LinkId=2124703`.
 
-Uninstall is `GUARDEX-Uninstall.exe`, also listed in Settings, Apps. It removes the programs, shortcuts, and the sign-in task. Two checkboxes are off unless you turn them on. Once removal starts, those choices leave the window. A progress bar then follows the steps that are actually running, and it is full when GUARDEX is removed. One removes this account's GUARDEX data (tunnel file, filters, browser profile, baseline, saved sign-in, and the log) and puts diagnostic settings back before that folder is deleted. Downloaded files in Downloads\GUARDEX stay. The other removes firewall rules GUARDEX added. The .NET runtime and WebView2 are left installed.
+Uninstall is `GUARDEX-Uninstall.exe`, also listed in Settings, Apps. It removes the programs, shortcuts, and the sign-in task. Two checkboxes are off unless you turn them on. Once removal starts, those choices leave the window. A progress bar then follows the steps that are actually running, and it is full when GUARDEX is removed. One removes this account's GUARDEX data (tunnel file, filters, browser profile, baseline, saved sign-in, and the log) and puts diagnostic settings back before that folder is deleted. Files already in the Downloads folder stay. The other removes firewall rules GUARDEX added. The .NET runtime and WebView2 are left installed.
 
 To build that setup on a machine that already has the SDK:
 
@@ -151,4 +151,12 @@ To build that setup on a machine that already has the SDK:
 
 The installer is written to `artifacts\GUARDEX-Setup.exe`.
 
-GUARDEX does not load a filesystem minifilter and it does not register itself as the Windows antivirus. Windows only lists an antivirus that Microsoft has enrolled, and a disk filter is a signed kernel driver. This program does not turn Windows Defender off. The sign-in option starts the same user-mode guard when you sign in, so the firewall rules, the telemetry block, remote-tool stops, and launch checks keep running.
+To try the three programs on this PC without building the installer:
+
+```powershell
+.\build-local.ps1
+```
+
+That writes `Guardex.exe`, `GuardexBrowser.exe`, and `GUARDEX-Uninstall.exe` to `artifacts\local`. It still needs the .NET 10 Desktop Runtime and the WebView2 runtime.
+
+GUARDEX does not load a filesystem minifilter and it does not register as the Windows antivirus. It does not turn Windows Defender off. The sign-in option starts the same user-mode guard when you sign in, so the firewall rules, the telemetry block, remote-tool stops, and launch checks keep running.

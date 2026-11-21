@@ -45,7 +45,7 @@ sealed class AdBlock
 
 	readonly object _gate = new();
 	readonly SemaphoreSlim _load = new(1, 1);
-	FilterSet _set = FilterSet.Empty;
+	FilterSet _set = FilterSet.Parse("");
 	string _status = "On. Loading filter lists.";
 	string _loaded = "";
 	int _started;
@@ -144,6 +144,29 @@ sealed class AdBlock
 		var script = set.Script();
 		if (!script.Contains("guardex-ads", StringComparison.Ordinal) || !script.Contains(".ad-box", StringComparison.Ordinal))
 			failures.Add("script");
+		if (!script.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player");
+		var bare = FilterSet.Parse("");
+		var bareScript = bare.Script();
+		if (!bareScript.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player only");
+		if (bareScript.Contains("guardex-ads", StringComparison.Ordinal)) failures.Add("empty css");
+		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/api/stats/ads?v=1", "xmlhttprequest", false))
+			failures.Add("yt ads");
+		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/pagead/interaction", "script", false))
+			failures.Add("yt pagead");
+		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/get_midroll_info", "script", false))
+			failures.Add("yt midroll");
+		if (!bare.Blocks("https://news.example/", "https://ad.doubleclick.net/pagead", "script", false))
+			failures.Add("doubleclick");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc", "document", true))
+			failures.Add("yt watch");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc", "xmlhttprequest", false))
+			failures.Add("yt watch request");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/youtubei/v1/player?key=1", "xmlhttprequest", false))
+			failures.Add("yt player");
+		if (bare.Blocks("https://www.youtube.com/watch?v=abc", "https://rr3---sn-abc.googlevideo.com/videoplayback?id=1", "media", false))
+			failures.Add("yt video");
+		if (bare.Blocks("https://news.example/", "https://notdoubleclick.net/a.js", "script", false))
+			failures.Add("doubleclick boundary");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 
@@ -309,9 +332,21 @@ sealed class AdBlock
 		public int Network { get; private set; }
 		public int CosmeticCount { get; private set; }
 
+		static readonly string[] BuiltIn =
+		[
+			"||youtube.com/api/stats/ads^",
+			"||youtube.com/pagead^",
+			"||youtube.com/get_midroll_",
+			"||youtube.com/ptracking^",
+			"||doubleclick.net^$important",
+			"||googlesyndication.com^$important",
+			"||googleadservices.com^$important"
+		];
+
 		public static FilterSet Parse(string text)
 		{
 			var set = new FilterSet();
+			foreach (var line in BuiltIn) set.Take(line);
 			var start = 0;
 			for (var i = 0; i < text.Length; i++)
 			{
@@ -402,27 +437,93 @@ sealed class AdBlock
 		public string Script()
 		{
 			if (_script != null) return _script;
-			if (_generic.Count == 0 && _specific.Count == 0) return _script = "";
 			var sb = new StringBuilder();
-			sb.Append("(function(){var generic=").Append(Js(string.Join('\n', _generic)));
-			sb.Append(";var globalBan=");
-			Map(sb, _globalBan.ToDictionary(item => item, _ => 1));
-			sb.Append(";var specific=");
-			Obj(sb, _specific);
-			sb.Append(";var ban=");
-			Obj(sb, _ban);
-			sb.Append(";function walk(host,fn){var parts=(host||'').split('.');for(var i=0;i<parts.length;i++){var d=parts.slice(i).join('.');if(d)fn(d);}}");
-			sb.Append("function build(host){var set={};for(var k in globalBan)set[k]=1;walk(host,function(d){var list=ban[d];if(list)for(var j=0;j<list.length;j++)set[list[j]]=1;});");
-			sb.Append("var css='',lines=generic.length?generic.split('\\n'):[],extra=[];");
-			sb.Append("for(var n=0;n<lines.length;n++){var s=lines[n];if(s&&!set[s])css+=s+'{display:none!important}\\n';}");
-			sb.Append("walk(host,function(d){var list=specific[d];if(!list)return;for(var j=0;j<list.length;j++)if(!set[list[j]])extra.push(list[j]);});");
-			sb.Append("for(var m=0;m<extra.length;m++)css+=extra[m]+'{display:none!important}\\n';return css;}");
-			sb.Append("function apply(){var root=document.documentElement;if(!root)return;var css=build((location.hostname||'').toLowerCase());if(!css)return;");
-			sb.Append("var el=document.getElementById('guardex-ads');if(!el){el=document.createElement('style');el.id='guardex-ads';(document.head||root).appendChild(el);}if(el.textContent!==css)el.textContent=css;}");
-			sb.Append("apply();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',apply);");
-			sb.Append("try{new MutationObserver(function(){if(!document.getElementById('guardex-ads'))apply();}).observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}})();");
+			if (_generic.Count > 0 || _specific.Count > 0)
+			{
+				sb.Append("(function(){var generic=").Append(Js(string.Join('\n', _generic)));
+				sb.Append(";var globalBan=");
+				Map(sb, _globalBan.ToDictionary(item => item, _ => 1));
+				sb.Append(";var specific=");
+				Obj(sb, _specific);
+				sb.Append(";var ban=");
+				Obj(sb, _ban);
+				sb.Append(";function walk(host,fn){var parts=(host||'').split('.');for(var i=0;i<parts.length;i++){var d=parts.slice(i).join('.');if(d)fn(d);}}");
+				sb.Append("function build(host){var set={};for(var k in globalBan)set[k]=1;walk(host,function(d){var list=ban[d];if(list)for(var j=0;j<list.length;j++)set[list[j]]=1;});");
+				sb.Append("var css='',lines=generic.length?generic.split('\\n'):[],extra=[];");
+				sb.Append("for(var n=0;n<lines.length;n++){var s=lines[n];if(s&&!set[s])css+=s+'{display:none!important}\\n';}");
+				sb.Append("walk(host,function(d){var list=specific[d];if(!list)return;for(var j=0;j<list.length;j++)if(!set[list[j]])extra.push(list[j]);});");
+				sb.Append("for(var m=0;m<extra.length;m++)css+=extra[m]+'{display:none!important}\\n';return css;}");
+				sb.Append("function apply(){var root=document.documentElement;if(!root)return;var css=build((location.hostname||'').toLowerCase());if(!css)return;");
+				sb.Append("var el=document.getElementById('guardex-ads');if(!el){el=document.createElement('style');el.id='guardex-ads';(document.head||root).appendChild(el);}if(el.textContent!==css)el.textContent=css;}");
+				sb.Append("apply();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',apply);");
+				sb.Append("try{new MutationObserver(function(){if(!document.getElementById('guardex-ads'))apply();}).observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}})();");
+			}
+			sb.Append(PlayerScript());
 			return _script = sb.ToString();
 		}
+
+		static string PlayerScript() => """
+			(function(){
+			var host=(location.hostname||'').toLowerCase();
+			if(!/(^|\.)youtube(-nocookie)?\.com$/.test(host))return;
+			window.__guardexPlayerStop=0;
+			if(window.__guardexPlayer)return;
+			window.__guardexPlayer=1;
+			/* guardex-player */
+			function scrub(node,depth){
+			  if(window.__guardexPlayerStop||!node||typeof node!=='object'||depth>12)return;
+			  if(Object.prototype.toString.call(node)==='[object Array]'){
+			    for(var i=0;i<node.length;i++)scrub(node[i],depth+1);
+			    return;
+			  }
+			  try{if(node.adPlacements)node.adPlacements=[];}catch(e){}
+			  try{if(node.playerAds)node.playerAds=[];}catch(e){}
+			  try{if(node.adSlots)node.adSlots=[];}catch(e){}
+			  for(var key in node){
+			    if(key==='adPlacements'||key==='playerAds'||key==='adSlots')continue;
+			    try{scrub(node[key],depth+1);}catch(e){}
+			  }
+			}
+			function arm(name){
+			  var slot;
+			  try{
+			    Object.defineProperty(window,name,{
+			      configurable:true,enumerable:true,
+			      get:function(){return slot;},
+			      set:function(value){try{scrub(value,0);}catch(e){}slot=value;}
+			    });
+			  }catch(e){}
+			}
+			arm('ytInitialPlayerResponse');
+			arm('ytInitialData');
+			if(!window.__guardexParse)window.__guardexParse=JSON.parse;
+			JSON.parse=function(text,reviver){
+			  var value=window.__guardexParse.call(JSON,text,reviver);
+			  try{
+			    if(!window.__guardexPlayerStop&&typeof text==='string'&&(text.indexOf('adPlacements')>=0||text.indexOf('playerAds')>=0||text.indexOf('adSlots')>=0))
+			      scrub(value,0);
+			  }catch(e){}
+			  return value;
+			};
+			var slots='ytd-ad-slot-renderer,ytd-banner-promo-renderer,ytd-merch-shelf-renderer,ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"]';
+			function tick(){
+			  if(window.__guardexPlayerStop)return;
+			  var player=document.querySelector('.html5-video-player.ad-showing');
+			  if(player){
+			    var video=player.querySelector('video');
+			    if(video&&isFinite(video.duration)&&video.duration>0&&video.currentTime<video.duration-0.25){
+			      try{video.currentTime=video.duration;}catch(e){}
+			    }
+			    var btn=player.querySelector('.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot button');
+			    if(btn){try{btn.click();}catch(e){}}
+			  }
+			  var ads=document.querySelectorAll(slots);
+			  for(var n=0;n<ads.length;n++)ads[n].style.setProperty('display','none','important');
+			}
+			tick();
+			setInterval(tick,400);
+			})();
+			""";
 
 		void Take(string raw)
 		{

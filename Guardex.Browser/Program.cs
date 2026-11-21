@@ -22,7 +22,9 @@ static class Program
 				SocksGate.SelfCheck(),
 				TorrentDesk.SelfCheck(),
 				AdBlock.SelfCheck(),
-				Guardex.Favorites.SelfCheck()
+				Guardex.Favorites.SelfCheck(),
+				Guardex.Favicon.SelfCheck(),
+				HomeDesk.SelfCheck()
 			};
 			if (parts.All(part => part == "PASS"))
 			{

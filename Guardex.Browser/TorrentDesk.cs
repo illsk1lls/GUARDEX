@@ -34,7 +34,7 @@ static class TorrentDesk
 	public static bool OsConfirmed { get; private set; }
 	public static bool KillswitchOn => VpnHub.Require && VpnHub.HasConfig;
 	public static bool Allowed => Wanted && (KillswitchOn || OsConfirmed);
-	public static string SaveRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "GUARDEX");
+	public static string SaveRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
 
 	static string FlagPath => Path.Combine(TunnelStore.Root, "torrent-flags.txt");
 	static string ListPath => Path.Combine(TunnelStore.Root, "torrent-list.txt");
@@ -88,7 +88,7 @@ static class TorrentDesk
 		if (!KillswitchOn)
 		{
 			if (!OsConfirmed && !PhraseOk(typed))
-				return "Type the confirmation to download without the tunnel.";
+				return "Type the confirmation to use this PC's network.";
 			OsConfirmed = true;
 		}
 		Wanted = true;
