@@ -48,6 +48,10 @@ public sealed class SiteTab : INotifyPropertyChanged
 	public string AdScriptId { get; set; } = "";
 	public string StyledHost { get; set; } = "";
 	public bool Loading { get; set; }
+	public string ResumeUrl { get; set; } = "";
+	public ulong ResumeId { get; set; }
+	public int ResumeToken { get; set; }
+	public ulong LoadId { get; set; }
 
 	public string Title
 	{
@@ -370,7 +374,11 @@ public partial class SiteBrowser : UserControl
 			await EnsureEnv();
 			await view.EnsureCoreWebView2Async(_env);
 			Wire(tab);
-			if (SiteDesk.IsPage(url)) view.CoreWebView2.Navigate(url!);
+			if (SiteDesk.IsPage(url))
+			{
+				RestoreSignIn(view.CoreWebView2, url!);
+				view.CoreWebView2.Navigate(url!);
+			}
 			if (select) PaintChrome();
 			if (select && _findOpen) _ = RunFind(false);
 			if (focusAddress) _ = Dispatcher.BeginInvoke(() => { Address.Focus(); Address.SelectAll(); });
@@ -451,6 +459,20 @@ public partial class SiteBrowser : UserControl
 			}
 			if (_parking || (_parked && (navUri.Length == 0 || navUri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))))
 				return;
+			if (tab.ResumeUrl.Length > 0 && args.NavigationId != tab.ResumeId)
+				DropResume(tab);
+			tab.LoadId = args.NavigationId;
+			// A link or redirect is already a load. Cancel it, restore, then open the address
+			// after this cancel finishes. WebView2 drops a Navigate issued before that.
+			if (!_parked && SignInMissing(navUri))
+			{
+				tab.ResumeUrl = navUri;
+				tab.ResumeId = args.NavigationId;
+				tab.Loading = true;
+				if (tab == Active) PaintChrome();
+				args.Cancel = true;
+				return;
+			}
 			if (tab == Active) CloseSettings();
 			tab.Loading = true;
 			tab.PageUrl = args.Uri ?? "";
@@ -460,17 +482,22 @@ public partial class SiteBrowser : UserControl
 				NoteVaultPage(tab.PageUrl);
 				PaintChrome();
 			}
-			if (_parked || !VaultDesk.TrySite(tab.PageUrl, out var site)) return;
-			if (VaultDesk.HasSignIn(site) && !_liveSites.Contains(site))
-			{
-				args.Cancel = true;
-				_ = Arm(tab, site, tab.PageUrl);
-				return;
-			}
+			if (_parked || !VaultDesk.TrySite(tab.PageUrl, out var opened) || opened.Length == 0) return;
 			_ = ReleaseSites(tab);
 		};
 		core.NavigationCompleted += (_, args) =>
 		{
+			if (tab.ResumeUrl.Length > 0 && args.NavigationId == tab.ResumeId
+				&& args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled)
+			{
+				var url = tab.ResumeUrl;
+				var token = tab.ResumeToken;
+				tab.ResumeUrl = "";
+				tab.ResumeId = 0;
+				Dispatcher.BeginInvoke(() => ResumeAfterSignIn(tab, url, token));
+				return;
+			}
+			if (args.NavigationId != tab.LoadId) return;
 			tab.Loading = false;
 			if (args.IsSuccess)
 			{
@@ -804,6 +831,7 @@ public partial class SiteBrowser : UserControl
 			_closed.Insert(0, url!);
 			if (_closed.Count > 10) _closed.RemoveAt(_closed.Count - 1);
 		}
+		DropResume(tab);
 		var index = _tabs.IndexOf(tab);
 		var core = tab.View.CoreWebView2;
 		_tabs.Remove(tab);
@@ -842,6 +870,7 @@ public partial class SiteBrowser : UserControl
 			_historyOpen = false;
 			CloseSuggest();
 			_typedFile = fileUrl;
+			DropResume(Active);
 			fileCore.Navigate(fileUrl);
 			return;
 		}
@@ -859,6 +888,8 @@ public partial class SiteBrowser : UserControl
 		SetNote("");
 		_historyOpen = false;
 		CloseSuggest();
+		DropResume(Active);
+		RestoreSignIn(core, url);
 		core.Navigate(url);
 	}
 
@@ -887,6 +918,8 @@ public partial class SiteBrowser : UserControl
 			return;
 		}
 		SetNote("");
+		DropResume(Active);
+		RestoreSignIn(core, url);
 		core.Navigate(url);
 	}
 
@@ -1135,35 +1168,57 @@ public partial class SiteBrowser : UserControl
 		}
 	}
 
-	async Task Arm(SiteTab tab, string site, string url)
+	bool SignInMissing(string url)
 	{
-		try
+		if (!VaultDesk.TrySite(url, out var typed)) return false;
+		foreach (var site in VaultDesk.SignSites())
 		{
-			await _vaultGate.WaitAsync();
-			try
-			{
-				if (_parked || !_tabs.Contains(tab)) return;
-				var core = tab.View.CoreWebView2;
-				if (core == null) return;
-				ReleaseSitesNow(core);
-				if (!VaultDesk.HasSignIn(site) || _liveSites.Contains(site)) return;
-				if (!VaultDesk.TrySite(tab.PageUrl, out var page) || page != site) return;
-				Inject(core, site);
-				_liveSites.Add(site);
-				if (_parked)
-				{
-					DropSite(core, site);
-					_liveSites.Remove(site);
-					return;
-				}
-				core.Navigate(url);
-			}
-			finally
-			{
-				_vaultGate.Release();
-			}
+			if (!string.Equals(site, typed, StringComparison.Ordinal) && !SameHost(site, typed)) continue;
+			if (!_liveSites.Contains(site)) return true;
 		}
-		catch { }
+		return false;
+	}
+
+	void DropResume(SiteTab? tab)
+	{
+		if (tab == null) return;
+		tab.ResumeToken++;
+		tab.ResumeUrl = "";
+		tab.ResumeId = 0;
+	}
+
+	void ResumeAfterSignIn(SiteTab tab, string url, int token)
+	{
+		if (token != tab.ResumeToken || _parked || !_tabs.Contains(tab)) return;
+		var core = tab.View.CoreWebView2;
+		if (core == null)
+		{
+			tab.Loading = false;
+			if (tab == Active) PaintChrome();
+			return;
+		}
+		tab.PageUrl = url;
+		RestoreSignIn(core, url);
+		try { core.Navigate(url); }
+		catch
+		{
+			tab.Loading = false;
+			if (tab == Active) PaintChrome();
+		}
+	}
+
+	// Cookies have to be in the profile before Navigate. WebView2 drops a Navigate
+	// issued while NavigationStarting is still running.
+	void RestoreSignIn(CoreWebView2 core, string url)
+	{
+		if (_parked || !VaultDesk.TrySite(url, out var typed)) return;
+		foreach (var site in VaultDesk.SignSites())
+		{
+			if (!string.Equals(site, typed, StringComparison.Ordinal) && !SameHost(site, typed)) continue;
+			if (_liveSites.Contains(site)) continue;
+			Inject(core, site);
+			_liveSites.Add(site);
+		}
 	}
 
 	async Task ReleaseSites(SiteTab tab)
@@ -1198,7 +1253,7 @@ public partial class SiteBrowser : UserControl
 	bool SiteOpen(string site)
 	{
 		foreach (var tab in _tabs)
-			if (VaultDesk.TrySite(tab.PageUrl, out var got) && got == site) return true;
+			if (VaultDesk.TrySite(tab.PageUrl, out var got) && (got == site || SameHost(got, site))) return true;
 		return false;
 	}
 
@@ -1207,6 +1262,15 @@ public partial class SiteBrowser : UserControl
 		foreach (var tab in _tabs)
 			if (tab.View.CoreWebView2 != null) return tab.View.CoreWebView2;
 		return null;
+	}
+
+	static bool SameHost(string left, string right)
+	{
+		if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b)) return false;
+		var one = a.IdnHost.Trim('.').ToLowerInvariant();
+		var two = b.IdnHost.Trim('.').ToLowerInvariant();
+		if (one.Length == 0 || two.Length == 0) return false;
+		return one == two || one.EndsWith("." + two, StringComparison.Ordinal) || two.EndsWith("." + one, StringComparison.Ordinal);
 	}
 
 	static void DropSite(CoreWebView2 core, string site)
@@ -1616,8 +1680,15 @@ public partial class SiteBrowser : UserControl
 	{
 		var core = Active?.View.CoreWebView2;
 		if (core == null) return;
-		if (Active!.Loading) core.Stop();
-		else core.Reload();
+		if (Active!.Loading)
+		{
+			DropResume(Active);
+			try { core.Stop(); } catch { }
+			Active.Loading = false;
+			PaintChrome();
+			return;
+		}
+		core.Reload();
 	}
 
 	void Cycle(int step)
@@ -2023,9 +2094,8 @@ public partial class SiteBrowser : UserControl
 		_addressSelectAll = false;
 		var moved = e.GetPosition(Address) - _addressDown;
 		if (Math.Abs(moved.X) > 4 || Math.Abs(moved.Y) > 4) return;
-		var count = Address.Text.Length;
-		if (count == 0) return;
-		Address.Select(count, -count);
+		if (Address.Text.Length == 0) return;
+		Address.SelectAll();
 	}
 
 	void ShowSuggest()
