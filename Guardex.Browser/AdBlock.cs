@@ -113,6 +113,15 @@ sealed class AdBlock
 
 	public string CosmeticScript() => _enabled ? _set.Script() : "";
 
+	public string StyleScript(string? pageUrl)
+	{
+		if (!_enabled) return "";
+		var host = PageHost(pageUrl ?? "");
+		if (host.Length == 0) return "";
+		var css = _set.CosmeticFor(host);
+		return css.Length == 0 ? "" : FilterSet.ApplyStyle(css);
+	}
+
 	public static string SelfCheck()
 	{
 		const string list =
@@ -173,21 +182,27 @@ sealed class AdBlock
 		if (set.CosmeticFor("www.example.com").Contains(".ad-box", StringComparison.Ordinal)) failures.Add("parent exception");
 		if (!set.CosmeticFor("www.ads.example").Contains(".sponsor", StringComparison.Ordinal)) failures.Add("specific");
 		var script = set.Script();
-		if (!script.Contains("guardex-ads", StringComparison.Ordinal) || !script.Contains(".ad-box", StringComparison.Ordinal))
+		if (script.Contains("guardex-ads", StringComparison.Ordinal) || script.Contains(".ad-box", StringComparison.Ordinal))
 			failures.Add("script");
 		if (!script.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player");
+		var styled = FilterSet.ApplyStyle(set.CosmeticFor("news.example"));
+		if (!styled.Contains("guardex-ads", StringComparison.Ordinal) || !styled.Contains(".ad-box", StringComparison.Ordinal))
+			failures.Add("style");
 		var tube = FilterSet.Parse("||youtube.com^\n@@||www.youtube.com^$generichide\n##.ad-box\n");
 		if (!tube.Blocks("https://news.example/", "https://www.youtube.com/embed/x", "subdocument", false))
 			failures.Add("generichide network");
-		var tubeScript = tube.Script();
-		if (!tubeScript.Contains("www.youtube.com", StringComparison.Ordinal) || !tubeScript.Contains("genericOff", StringComparison.Ordinal))
+		if (tube.CosmeticFor("www.youtube.com").Contains(".ad-box", StringComparison.Ordinal))
 			failures.Add("generichide");
+		if (!tube.CosmeticFor("news.example").Contains(".ad-box", StringComparison.Ordinal))
+			failures.Add("generichide other");
 		var bare = FilterSet.Parse("");
 		var bareScript = bare.Script();
 		if (!bareScript.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player only");
 		if (bareScript.Contains("ytInitialData", StringComparison.Ordinal) || bareScript.Contains("depth>", StringComparison.Ordinal))
 			failures.Add("yt walk");
-		if (!bareScript.Contains("ytInitialPlayerResponse", StringComparison.Ordinal)) failures.Add("yt arm");
+		if (bareScript.Contains("ytInitialPlayerResponse", StringComparison.Ordinal) || bareScript.Contains("JSON.parse", StringComparison.Ordinal))
+			failures.Add("yt arm");
+		if (!bareScript.Contains("ytp-skip-ad-button", StringComparison.Ordinal)) failures.Add("yt skip");
 		if (bareScript.Contains("guardex-ads", StringComparison.Ordinal)) failures.Add("empty css");
 		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/api/stats/ads?v=1", "xmlhttprequest", false))
 			failures.Add("yt ads");
@@ -429,7 +444,7 @@ sealed class AdBlock
 		readonly Dictionary<string, List<string>> _specific = new(StringComparer.OrdinalIgnoreCase);
 		readonly Dictionary<string, List<string>> _ban = new(StringComparer.OrdinalIgnoreCase);
 		readonly HashSet<string> _genericHide = new(StringComparer.OrdinalIgnoreCase);
-		string? _script;
+		readonly Dictionary<string, string> _css = new(StringComparer.OrdinalIgnoreCase);
 
 		public int Network { get; private set; }
 		public int CosmeticCount { get; private set; }
@@ -515,9 +530,11 @@ sealed class AdBlock
 
 		public string CosmeticFor(string host)
 		{
+			var key = (host ?? "").Trim('.').ToLowerInvariant();
+			if (_css.TryGetValue(key, out var cached)) return cached;
 			var ban = new HashSet<string>(_globalBan, StringComparer.Ordinal);
 			var extra = new List<string>();
-			var name = (host ?? "").Trim('.').ToLowerInvariant();
+			var name = key;
 			while (name.Length > 0)
 			{
 				if (_ban.TryGetValue(name, out var banned))
@@ -528,11 +545,14 @@ sealed class AdBlock
 				name = name[(dot + 1)..];
 			}
 			var sb = new StringBuilder();
-			foreach (var selector in _generic)
+			if (!GenericHidden(key))
 			{
-				if (ban.Contains(selector)) continue;
-				if (sb.Length > 0) sb.Append('\n');
-				sb.Append(selector);
+				foreach (var selector in _generic)
+				{
+					if (ban.Contains(selector)) continue;
+					if (sb.Length > 0) sb.Append('\n');
+					sb.Append(selector);
+				}
 			}
 			foreach (var selector in extra)
 			{
@@ -540,38 +560,39 @@ sealed class AdBlock
 				if (sb.Length > 0) sb.Append('\n');
 				sb.Append(selector);
 			}
-			return sb.ToString();
+			var text = sb.ToString();
+			_css[key] = text;
+			return text;
 		}
 
-		public string Script()
+		bool GenericHidden(string host)
 		{
-			if (_script != null) return _script;
-			var sb = new StringBuilder();
-			if (_generic.Count > 0 || _specific.Count > 0)
+			var name = host;
+			while (name.Length > 0)
 			{
-				sb.Append("(function(){var generic=").Append(Js(string.Join('\n', _generic)));
-				sb.Append(";var globalBan=");
-				Map(sb, _globalBan.ToDictionary(item => item, _ => 1));
-				sb.Append(";var specific=");
-				Obj(sb, _specific);
-				sb.Append(";var ban=");
-				Obj(sb, _ban);
-				sb.Append(";var genericHide=");
-				Map(sb, _genericHide.ToDictionary(item => item, _ => 1));
-				sb.Append(";function walk(host,fn){var parts=(host||'').split('.');for(var i=0;i<parts.length;i++){var d=parts.slice(i).join('.');if(d)fn(d);}}");
-				sb.Append("function genericOff(host){var off=false;walk(host,function(d){if(genericHide[d])off=true;});return off;}");
-				sb.Append("function build(host){var set={};for(var k in globalBan)set[k]=1;walk(host,function(d){var list=ban[d];if(list)for(var j=0;j<list.length;j++)set[list[j]]=1;});");
-				sb.Append("var css='',lines=genericOff(host)||!generic.length?[]:generic.split('\\n'),extra=[];");
-				sb.Append("for(var n=0;n<lines.length;n++){var s=lines[n];if(s&&!set[s])css+=s+'{display:none!important}\\n';}");
-				sb.Append("walk(host,function(d){var list=specific[d];if(!list)return;for(var j=0;j<list.length;j++)if(!set[list[j]])extra.push(list[j]);});");
-				sb.Append("for(var m=0;m<extra.length;m++)css+=extra[m]+'{display:none!important}\\n';return css;}");
-				sb.Append("function apply(){var root=document.documentElement;if(!root)return;var css=build((location.hostname||'').toLowerCase());if(!css)return;");
-				sb.Append("var el=document.getElementById('guardex-ads');if(!el){el=document.createElement('style');el.id='guardex-ads';(document.head||root).appendChild(el);}if(el.textContent!==css)el.textContent=css;}");
-				sb.Append("apply();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',apply);");
-				sb.Append("try{new MutationObserver(function(){if(!document.getElementById('guardex-ads'))apply();}).observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}})();");
+				if (_genericHide.Contains(name)) return true;
+				var dot = name.IndexOf('.');
+				if (dot <= 0 || dot >= name.Length - 1) break;
+				name = name[(dot + 1)..];
 			}
-			sb.Append(PlayerScript());
-			return _script = sb.ToString();
+			return false;
+		}
+
+		public string Script() => PlayerScript();
+
+		public static string ApplyStyle(string selectors)
+		{
+			var css = new StringBuilder();
+			foreach (var line in selectors.Split('\n'))
+			{
+				if (line.Length == 0) continue;
+				css.Append(line).Append("{display:none!important}\n");
+			}
+			if (css.Length == 0) return "";
+			return "(function(){var css=" + Js(css.ToString())
+				+ ";var root=document.documentElement;if(!root)return;var el=document.getElementById('guardex-ads');"
+				+ "if(!el){el=document.createElement('style');el.id='guardex-ads';(document.head||root).appendChild(el);}"
+				+ "if(el.textContent!==css)el.textContent=css;})();";
 		}
 
 		static string PlayerScript() => """
@@ -582,32 +603,6 @@ sealed class AdBlock
 			if(window.__guardexPlayer)return;
 			window.__guardexPlayer=1;
 			/* guardex-player */
-			function clearAds(node){
-			  if(!node||typeof node!=='object')return;
-			  try{if(node.adPlacements)node.adPlacements=[];}catch(e){}
-			  try{if(node.playerAds)node.playerAds=[];}catch(e){}
-			  try{if(node.adSlots)node.adSlots=[];}catch(e){}
-			}
-			function arm(name){
-			  var slot;
-			  try{
-			    Object.defineProperty(window,name,{
-			      configurable:true,enumerable:true,
-			      get:function(){return slot;},
-			      set:function(value){try{clearAds(value);}catch(e){}slot=value;}
-			    });
-			  }catch(e){}
-			}
-			arm('ytInitialPlayerResponse');
-			if(!window.__guardexParse)window.__guardexParse=JSON.parse;
-			JSON.parse=function(text,reviver){
-			  var value=window.__guardexParse.call(JSON,text,reviver);
-			  try{
-			    if(!window.__guardexPlayerStop&&value&&typeof value==='object'&&(value.playabilityStatus||value.videoDetails))
-			      clearAds(value);
-			  }catch(e){}
-			  return value;
-			};
 			var slots='ytd-ad-slot-renderer,ytd-banner-promo-renderer,ytd-merch-shelf-renderer,ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"]';
 			function tick(){
 			  if(window.__guardexPlayerStop)return;
@@ -623,7 +618,6 @@ sealed class AdBlock
 			  var ads=document.querySelectorAll(slots);
 			  for(var n=0;n<ads.length;n++)ads[n].style.setProperty('display','none','important');
 			}
-			tick();
 			setInterval(tick,400);
 			})();
 			""";
@@ -725,38 +719,6 @@ sealed class AdBlock
 		{
 			if (!map.TryGetValue(key, out var list)) map[key] = list = [];
 			list.Add(value);
-		}
-
-		static void Obj(StringBuilder sb, Dictionary<string, List<string>> map)
-		{
-			sb.Append('{');
-			var first = true;
-			foreach (var pair in map)
-			{
-				if (!first) sb.Append(',');
-				first = false;
-				sb.Append(Js(pair.Key)).Append(':').Append('[');
-				for (var i = 0; i < pair.Value.Count; i++)
-				{
-					if (i > 0) sb.Append(',');
-					sb.Append(Js(pair.Value[i]));
-				}
-				sb.Append(']');
-			}
-			sb.Append('}');
-		}
-
-		static void Map(StringBuilder sb, Dictionary<string, int> map)
-		{
-			sb.Append('{');
-			var first = true;
-			foreach (var pair in map)
-			{
-				if (!first) sb.Append(',');
-				first = false;
-				sb.Append(Js(pair.Key)).Append(":1");
-			}
-			sb.Append('}');
 		}
 	}
 

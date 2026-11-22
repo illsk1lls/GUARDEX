@@ -46,6 +46,7 @@ public sealed class SiteTab : INotifyPropertyChanged
 	public List<SiteCall> Calls { get; } = [];
 	public string PageUrl { get; set; } = "";
 	public string AdScriptId { get; set; } = "";
+	public string StyledHost { get; set; } = "";
 	public bool Loading { get; set; }
 
 	public string Title
@@ -475,6 +476,7 @@ public partial class SiteBrowser : UserControl
 			{
 				NoteVisit(tab);
 				SaveSession();
+				PaintStyle(tab);
 				if (tab == Active) SetNote("");
 			}
 			else if (tab == Active && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
@@ -601,15 +603,29 @@ public partial class SiteBrowser : UserControl
 				try { core.RemoveScriptToExecuteOnDocumentCreated(tab.AdScriptId); } catch { }
 				tab.AdScriptId = "";
 			}
+			tab.StyledHost = "";
 			if (body.Length == 0)
 			{
-				try { await core.ExecuteScriptAsync("window.__guardexPlayerStop=1;"); } catch { }
+				try { await core.ExecuteScriptAsync("window.__guardexPlayerStop=1;var el=document.getElementById('guardex-ads');if(el)el.remove();"); } catch { }
 				continue;
 			}
 			try { tab.AdScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(body); }
 			catch { }
 			try { await core.ExecuteScriptAsync(body); } catch { }
+			PaintStyle(tab);
 		}
+	}
+
+	void PaintStyle(SiteTab tab)
+	{
+		var core = tab.View.CoreWebView2;
+		if (core == null || !AdBlock.Shared.Enabled) return;
+		var host = Favicon.Host(core.Source);
+		if (host.Length == 0 || host == tab.StyledHost) return;
+		var js = AdBlock.Shared.StyleScript(core.Source);
+		tab.StyledHost = host;
+		if (js.Length == 0) return;
+		_ = core.ExecuteScriptAsync(js);
 	}
 
 	void PaintAds()
@@ -926,6 +942,7 @@ public partial class SiteBrowser : UserControl
 		DownloadsPopup.IsOpen = _downloadsOpen;
 		BookBar.Visibility = !full && _bookBar && _bookmarks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 		BookBarItem.Content = _bookBar ? "Hide bookmarks bar" : "Show bookmarks bar";
+		ReopenItem.Visibility = _closed.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 		var url = core?.Source ?? "";
 		var blank = !SiteDesk.IsPage(url) && !LinkRules.IsLocalFile(url);
 		HomePane.Visibility = !_settingsOpen && blank && !_historyOpen ? Visibility.Visible : Visibility.Collapsed;
@@ -1574,6 +1591,11 @@ public partial class SiteBrowser : UserControl
 			if (index < _tabs.Count) Select(_tabs[index]);
 			handled = true;
 		}
+		else if (ctrl && !shift && !alt && key == Key.D9)
+		{
+			if (_tabs.Count > 0) Select(_tabs[^1]);
+			handled = true;
+		}
 		if (handled) e.Handled = true;
 		base.OnPreviewKeyDown(e);
 	}
@@ -1612,6 +1634,68 @@ public partial class SiteBrowser : UserControl
 		var url = _closed[0];
 		_closed.RemoveAt(0);
 		_ = AddTab(url, true, false);
+	}
+
+	ContextMenu TabMenu(SiteTab tab)
+	{
+		var items = new List<(string Header, RoutedEventHandler Click)>
+		{
+			("New tab", (_, _) => OpenTab(false)),
+			("Duplicate", (_, _) => _ = Duplicate(tab)),
+			("Copy address", (_, _) => CopyAddress(tab)),
+			("Close", (_, _) => CloseTab(tab)),
+			("Close other tabs", (_, _) => CloseOthers(tab))
+		};
+		if (_closed.Count > 0)
+			items.Add(("Reopen closed tab", (_, _) => Reopen()));
+		return DarkMenu(items.ToArray());
+	}
+
+	async Task Duplicate(SiteTab tab)
+	{
+		var url = tab.View.CoreWebView2?.Source ?? "";
+		if (LinkRules.IsLocalFile(url))
+		{
+			var copy = await AddTab(null, true, false);
+			var core = copy?.View.CoreWebView2;
+			if (core == null) return;
+			_typedFile = url;
+			core.Navigate(url);
+			return;
+		}
+		if (SiteDesk.IsPage(url))
+		{
+			await AddTab(url, true, false);
+			return;
+		}
+		OpenTab(false);
+	}
+
+	void CopyAddress(SiteTab tab)
+	{
+		var url = tab.View.CoreWebView2?.Source ?? "";
+		var text = SiteDesk.IsPage(url) ? url : LinkRules.IsLocalFile(url) ? LinkRules.LocalText(url) : "";
+		if (text.Length == 0)
+		{
+			SetNote("This tab has no address to copy.");
+			return;
+		}
+		try
+		{
+			System.Windows.Clipboard.SetText(text);
+			SetNote("Address copied.");
+		}
+		catch (Exception ex)
+		{
+			SetNote(ex.Message);
+		}
+	}
+
+	void CloseOthers(SiteTab keep)
+	{
+		foreach (var tab in _tabs.Where(item => item != keep).ToArray())
+			CloseTab(tab);
+		if (_tabs.Contains(keep)) Select(keep);
 	}
 
 	void ShowFind()
@@ -1697,6 +1781,12 @@ public partial class SiteBrowser : UserControl
 	}
 
 	void OnNewTab(object sender, RoutedEventArgs e) => OpenTab(false);
+
+	void OnReopen(object sender, RoutedEventArgs e)
+	{
+		CloseMenu();
+		Reopen();
+	}
 
 	void OpenTab(bool keepChrome)
 	{
@@ -1995,12 +2085,18 @@ public partial class SiteBrowser : UserControl
 
 	void OnTabMouse(object sender, MouseButtonEventArgs e)
 	{
-		if (e.ChangedButton != MouseButton.Middle) return;
-		if (sender is FrameworkElement el && el.DataContext is SiteTab tab)
+		if (sender is not FrameworkElement el || el.DataContext is not SiteTab tab) return;
+		if (e.ChangedButton == MouseButton.Middle)
 		{
 			CloseTab(tab);
 			e.Handled = true;
+			return;
 		}
+		if (e.ChangedButton != MouseButton.Right) return;
+		e.Handled = true;
+		var menu = TabMenu(tab);
+		menu.PlacementTarget = el;
+		menu.IsOpen = true;
 	}
 
 	void OnCloseTab(object sender, RoutedEventArgs e)
@@ -2524,11 +2620,31 @@ public partial class SiteBrowser : UserControl
 			Foreground = Ink,
 			IsHitTestVisible = false
 		};
-		var image = new Image { Width = 48, Height = 48, IsHitTestVisible = false };
-		image.Clip = new EllipseGeometry(new Rect(0, 0, 48, 48));
+		void ShowMark() => mark.Visibility = item.Icon == null ? Visibility.Visible : Visibility.Collapsed;
+		item.PropertyChanged += (_, args) =>
+		{
+			if (args.PropertyName is null or nameof(HomeShortcut.Icon))
+				mark.Dispatcher.Invoke(ShowMark);
+		};
+		ShowMark();
+		var image = new Image
+		{
+			Width = 48,
+			Height = 48,
+			Stretch = Stretch.Uniform,
+			IsHitTestVisible = false
+		};
+		image.Clip = new RectangleGeometry(new Rect(0, 0, 48, 48), 10, 10);
 		image.SetBinding(Image.SourceProperty, new Binding(nameof(HomeShortcut.Icon)) { Source = item });
 		var face = new Grid { Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Center };
-		face.Children.Add(new System.Windows.Shapes.Ellipse { Width = 48, Height = 48, Fill = TileFace, IsHitTestVisible = false });
+		face.Children.Add(new Border
+		{
+			Width = 48,
+			Height = 48,
+			CornerRadius = new CornerRadius(10),
+			Background = TileFace,
+			IsHitTestVisible = false
+		});
 		face.Children.Add(mark);
 		face.Children.Add(image);
 		var name = new TextBlock
@@ -2614,7 +2730,14 @@ public partial class SiteBrowser : UserControl
 			IsHitTestVisible = false
 		};
 		var face = new Grid { Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Center };
-		face.Children.Add(new System.Windows.Shapes.Ellipse { Width = 48, Height = 48, Fill = TileFace, IsHitTestVisible = false });
+		face.Children.Add(new Border
+		{
+			Width = 48,
+			Height = 48,
+			CornerRadius = new CornerRadius(10),
+			Background = TileFace,
+			IsHitTestVisible = false
+		});
 		face.Children.Add(plus);
 		var caption = new TextBlock
 		{

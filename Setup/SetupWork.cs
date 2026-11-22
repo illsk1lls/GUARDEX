@@ -148,7 +148,7 @@ static class SetupWork
 	public static string ThisVersion()
 	{
 		var version = typeof(SetupWork).Assembly.GetName().Version;
-		if (version == null) return "0.6.7";
+		if (version == null) return "0.6.8";
 		var patch = version.Build < 0 ? 0 : version.Build;
 		return version.Major + "." + version.Minor + "." + patch;
 	}
