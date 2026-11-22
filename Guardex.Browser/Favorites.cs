@@ -66,8 +66,9 @@ static class Favorites
 		var full = false;
 		foreach (var item in incoming)
 		{
-			if (!SiteDesk.IsPage(item.Url)) continue;
-			if (!seen.Add(item.Url))
+			var url = SiteDesk.Kept(item.Url);
+			if (url.Length == 0) continue;
+			if (!seen.Add(url))
 			{
 				already++;
 				continue;
@@ -77,7 +78,9 @@ static class Favorites
 				full = true;
 				break;
 			}
-			into.Add(item);
+			var title = SiteDesk.OneLine(item.Title);
+			if (title.Length == 0) title = url;
+			into.Add(new SiteVisit { Utc = item.Utc, Title = title, Url = url });
 			added++;
 		}
 		return new FavoriteMerge(added, already, full);
@@ -125,8 +128,8 @@ static class Favorites
 		var type = node.TryGetProperty("type", out var kind) ? kind.GetString() ?? "" : "";
 		if (type.Equals("url", StringComparison.OrdinalIgnoreCase))
 		{
-			var url = node.TryGetProperty("url", out var urlEl) ? urlEl.GetString() ?? "" : "";
-			if (!SiteDesk.IsPage(url) || items.Any(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) return;
+			var url = SiteDesk.Kept(node.TryGetProperty("url", out var urlEl) ? urlEl.GetString() : "");
+			if (url.Length == 0 || items.Any(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) return;
 			var title = node.TryGetProperty("name", out var name) ? SiteDesk.OneLine(name.GetString()) : "";
 			if (title.Length == 0) title = url;
 			items.Add(new SiteVisit { Utc = DateTime.UtcNow.ToString("o"), Title = title, Url = url });
@@ -165,8 +168,8 @@ static class Favorites
 			while (reader.Read())
 			{
 				if (items.Count >= SiteDesk.BookmarkMax) break;
-				var url = reader.GetString(1);
-				if (!SiteDesk.IsPage(url) || items.Any(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) continue;
+				var url = SiteDesk.Kept(reader.GetString(1));
+				if (url.Length == 0 || items.Any(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) continue;
 				var title = SiteDesk.OneLine(reader.GetString(0));
 				if (title.Length == 0) title = url;
 				items.Add(new SiteVisit { Utc = DateTime.UtcNow.ToString("o"), Title = title, Url = url });
@@ -242,11 +245,12 @@ static class Favorites
 			{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"Example","url":"https://example.com/a"},{"type":"folder","name":"Later","children":[{"type":"url","name":"Skip","url":"javascript:alert(1)"},{"type":"url","name":"Other","url":"https://example.org/b"}]},{"type":"url","name":"Dup","url":"https://example.com/a"}]},"other":{"children":[{"type":"url","name":"File","url":"file:///c/windows"}]}}}
 			""";
 		var read = ReadChromeJson(json);
-		if (read.Count != 2 || read[0].Url != "https://example.com/a" || read[1].Title != "Other")
+		if (read.Count != 4 || read[0].Url != "https://example.com/a" || read[1].Url != "javascript:alert(1)"
+			|| read[2].Title != "Other" || read[3].Url != "file:///c/windows")
 			failures.Add("chrome " + read.Count);
 		var into = new List<SiteVisit> { new() { Title = "Had", Url = "https://example.org/b" } };
 		var merged = Merge(into, read);
-		if (merged.Added != 1 || merged.Already != 1 || into.Count != 2 || into[0].Url != "https://example.org/b")
+		if (merged.Added != 3 || merged.Already != 1 || into.Count != 4 || into[0].Url != "https://example.org/b")
 			failures.Add("merge");
 		var ini = "[InstallX]\nDefault=Profiles/a\n\n[Profile0]\nName=Day\nIsRelative=1\nPath=Profiles/day\n\n[Profile1]\nName=Night\nIsRelative=0\nPath=C:\\fx\\night\n";
 		var profiles = ParseFirefoxIni(ini, Path.Combine("C:", "fx"));
@@ -273,7 +277,7 @@ static class Favorites
 				make.ExecuteNonQuery();
 			}
 			var fox = ReadFirefox(db);
-			if (fox.Count != 1 || fox[0].Title != "From Firefox" || fox[0].Url != "https://example.com/f")
+			if (fox.Count != 2 || fox[0].Url != "about:blank" || fox[1].Title != "From Firefox")
 				failures.Add("firefox " + fox.Count);
 		}
 		catch (Exception ex)

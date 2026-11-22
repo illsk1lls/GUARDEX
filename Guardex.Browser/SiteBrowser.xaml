@@ -195,6 +195,7 @@
         <Button x:Name="BackButton" Style="{StaticResource IconButton}" Content="&#xE72B;" ToolTip="Back" Click="OnBack"/>
         <Button x:Name="ForwardButton" Style="{StaticResource IconButton}" Content="&#xE72A;" ToolTip="Forward" Click="OnForward"/>
         <Button x:Name="ReloadButton" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="Reload" Click="OnReload"/>
+        <Button x:Name="HomeButton" Style="{StaticResource IconButton}" Content="&#xE80F;" ToolTip="Home" Click="OnHome"/>
       </StackPanel>
       <Grid x:Name="AddressHost" Grid.Column="1" Margin="4,0">
         <Border Background="#1B2119" BorderBrush="#2C3828" BorderThickness="1" CornerRadius="18" Height="36"/>
@@ -360,7 +361,7 @@
             <TextBlock Text="Bookmarks" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
           </DockPanel>
           <StackPanel Grid.Row="1" Margin="16,0,16,8">
-            <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import bookmarks from Chrome, Edge, or Firefox."/>
+            <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import bookmarks from Chrome, Edge, or Firefox. An address that is not a normal page is still kept."/>
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
               <Button Content="Chrome" Tag="chrome" Click="OnImportBrowser" Margin="0,0,8,0"/>
               <Button Content="Edge" Tag="edge" Click="OnImportBrowser" Margin="0,0,8,0"/>
@@ -458,18 +459,34 @@
             <Button x:Name="NavDownloads" Style="{StaticResource NavItem}" Content="Downloads" Tag="downloads" Click="OnSettingsNav"/>
             <Button x:Name="NavVpn" Style="{StaticResource NavItem}" Content="VPN" Tag="vpn" Click="OnSettingsNav"/>
             <Button x:Name="NavPrivacy" Style="{StaticResource NavItem}" Content="Privacy" Tag="privacy" Click="OnSettingsNav"/>
+            <Button x:Name="NavPasswords" Style="{StaticResource NavItem}" Content="Passwords" Tag="passwords" Click="OnSettingsNav"/>
           </StackPanel>
         </Border>
         <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="32,24,32,32" MaxWidth="640" HorizontalAlignment="Left">
             <StackPanel x:Name="PageGeneral">
               <TextBlock Text="General" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
-              <TextBlock Text="On startup" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
-                         Text="GUARDEX Browser opens the tabs from the last session."/>
-              <TextBlock Text="New tab" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Margin="0,4,0,16" Foreground="#8EA088" TextWrapping="Wrap"
-                         Text="A new tab has search and shortcuts. Bookmarks stay on the bar under the address field."/>
+              <TextBlock Text="Home page" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="The home button and a newly opened window use this page. The built-in page has search and shortcuts."/>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <RadioButton x:Name="HomePage" Content="Built-in page" GroupName="HomeMode" Checked="OnStartChoice"/>
+                <RadioButton x:Name="HomeCustom" Content="Custom page" GroupName="HomeMode" Checked="OnStartChoice"/>
+              </StackPanel>
+              <TextBox x:Name="HomeCustomUrl" Height="32" Margin="0,0,0,4" Visibility="Collapsed" VerticalContentAlignment="Center" LostFocus="OnStartUrl" KeyDown="OnStartUrlKey"/>
+              <TextBlock x:Name="HomeCustomNote" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"
+                         Text="Enter an http or https address."/>
+              <TextBlock Text="New tab" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0"/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="A new tab can open the home page, the built-in page, or another address. A page that asks for its own window still opens that page."/>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <RadioButton x:Name="TabHome" Content="Home page" GroupName="TabMode" Checked="OnStartChoice"/>
+                <RadioButton x:Name="TabPage" Content="Built-in page" GroupName="TabMode" Checked="OnStartChoice"/>
+                <RadioButton x:Name="TabCustom" Content="Custom page" GroupName="TabMode" Checked="OnStartChoice"/>
+              </StackPanel>
+              <TextBox x:Name="TabCustomUrl" Height="32" Margin="0,0,0,4" Visibility="Collapsed" VerticalContentAlignment="Center" LostFocus="OnStartUrl" KeyDown="OnStartUrlKey"/>
+              <TextBlock x:Name="TabCustomNote" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,0,0,16" Visibility="Collapsed"
+                         Text="Enter an http or https address."/>
               <TextBlock Text="Page zoom" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
               <StackPanel Orientation="Horizontal">
                 <Button Content="&#xE71F;" FontFamily="Segoe MDL2 Assets" Width="36" Height="32" Padding="0" ToolTip="Zoom out" Click="OnZoomOut"/>
@@ -510,13 +527,8 @@
               </StackPanel>
               <TextBlock Margin="0,0,0,16" Foreground="#8EA088" TextWrapping="Wrap"
                          Text="EasyList, EasyPrivacy, Peter Lowe's ad servers, and a malicious-address list. Easy uses those lists. Medium also blocks third-party scripts and frames. Hard also blocks every other third-party request. Medium and hard break some sites. The page address is not blocked. In-player video ads are skipped. Lists refresh about every four days."/>
-              <TextBlock Text="Passwords" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
-                         Text="Saved passwords and sign-in cookies are encrypted for this PC. They are loaded only while you are on that site. A copy of them does not open on another computer."/>
-              <TextBlock x:Name="VaultCount" Margin="0,0,0,8" TextWrapping="Wrap" Text="No saved sign-ins."/>
-              <Button Content="Forget saved sign-ins" HorizontalAlignment="Left" Margin="0,0,0,16" Click="OnForgetSignIns"/>
               <TextBlock Text="History and bookmarks" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
-              <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import bookmarks from Chrome, Edge, or Firefox. Existing bookmarks stay."/>
+              <TextBlock Foreground="#8EA088" TextWrapping="Wrap" Text="Import bookmarks from Chrome, Edge, or Firefox. Existing bookmarks stay. An address that is not a normal page is still kept. This browser opens http and https pages."/>
               <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                 <Button Content="Chrome" Tag="chrome" Click="OnImportBrowser" Margin="0,0,8,0"/>
                 <Button Content="Edge" Tag="edge" Click="OnImportBrowser" Margin="0,0,8,0"/>
@@ -532,6 +544,20 @@
               <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
                          Text="Calls from the open tab are listed. The list does not block them."/>
               <Button Content="Show calls" HorizontalAlignment="Left" Click="OnCallsToggle"/>
+            </StackPanel>
+            <StackPanel x:Name="PagePasswords" Visibility="Collapsed">
+              <TextBlock Text="Passwords" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/>
+              <TextBlock Margin="0,0,0,12" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Saved passwords and sign-in cookies are encrypted for this PC. They are loaded only while you are on that site. A copy of them does not open on another computer."/>
+              <StackPanel x:Name="PassFilter" Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed">
+                <RadioButton x:Name="PassAll" Content="All" GroupName="PassView" Checked="OnPassFilter"/>
+                <RadioButton x:Name="PassHere" Content="Current page" GroupName="PassView" Checked="OnPassFilter"/>
+              </StackPanel>
+              <TextBlock x:Name="PassEmpty" Text="No saved passwords." Margin="0,0,0,8" Visibility="Collapsed"/>
+              <StackPanel x:Name="PassRows"/>
+              <Button x:Name="PassForget" Content="Forget saved sign-ins" HorizontalAlignment="Left" Margin="0,8,0,8" Visibility="Collapsed" Click="OnForgetSignIns"/>
+              <Button Content="Import" HorizontalAlignment="Left" Margin="0,8,0,0" Click="OnImportPasswords"/>
+              <TextBlock x:Name="PassImportNote" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,8,0,0"/>
             </StackPanel>
           </StackPanel>
         </ScrollViewer>

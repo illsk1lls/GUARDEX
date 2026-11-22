@@ -25,6 +25,7 @@ static class Program
 				Guardex.Favorites.SelfCheck(),
 				Guardex.Favicon.SelfCheck(),
 				HomeDesk.SelfCheck(),
+				StartDesk.SelfCheck(),
 				VaultDesk.SelfCheck()
 			};
 			if (parts.All(part => part == "PASS"))

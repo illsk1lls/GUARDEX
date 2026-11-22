@@ -25,6 +25,13 @@ static class LaunchRules
 		"opera_crashreporter", "opera_autoupdate"
 	};
 
+	// Stopped only when GuardexBrowser is an ancestor. The same names under Edge, Chrome, or Windows stay allowed.
+	static readonly HashSet<string> OwnLeaks = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"crashpad_handler", "crashhelper", "pingsender", "microsoftedgeupdate", "elevation_service",
+		"smartscreen", "werfault", "werfaultsecure", "wermgr"
+	};
+
 	static readonly HashSet<string> Vehicles = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "certutil", "bitsadmin",
@@ -55,6 +62,19 @@ static class LaunchRules
 	}
 
 	public static bool IsBrowser(string name) => Browsers.Contains(Bare(name));
+
+	public static bool OwnLeak(string name) => OwnLeaks.Contains(Bare(name));
+
+	public static string DecideOwn(string name, IReadOnlyList<string> ancestors, bool allowed)
+	{
+		if (allowed || !OwnLeak(name)) return "allow";
+		for (var i = 0; i < ancestors.Count; i++)
+		{
+			if (Bare(ancestors[i]).Equals("GuardexBrowser", StringComparison.OrdinalIgnoreCase))
+				return "stop";
+		}
+		return "allow";
+	}
 
 	public static string Decide(string parent, string name, string path, bool allowed)
 	{
@@ -176,6 +196,32 @@ static class LaunchRules
 			failures.Add("bare nc");
 		if (Decide("chrome", "nuclei", @"C:\Tools\nuclei.exe", true) != "allow")
 			failures.Add("allowed tool");
+		if (DecideOwn("crashpad_handler", new[] { "msedgewebview2", "GuardexBrowser" }, false) != "stop")
+			failures.Add("own crashpad");
+		if (DecideOwn("crashpad_handler", new[] { "msedge" }, false) != "allow")
+			failures.Add("edge crashpad");
+		if (DecideOwn("crashhelper", new[] { "GuardexBrowser" }, false) != "stop")
+			failures.Add("own crashhelper");
+		if (DecideOwn("pingsender", new[] { "msedgewebview2", "GuardexBrowser" }, false) != "stop")
+			failures.Add("own ping");
+		if (DecideOwn("microsoftedgeupdate", new[] { "services" }, false) != "allow")
+			failures.Add("edge update service");
+		if (DecideOwn("microsoftedgeupdate", new[] { "msedgewebview2", "GuardexBrowser.exe" }, false) != "stop")
+			failures.Add("own update");
+		if (DecideOwn("elevation_service", new[] { "msedgewebview2", "GuardexBrowser" }, false) != "stop")
+			failures.Add("own elevation");
+		if (Decide("msedge", "elevation_service", @"C:\Program Files\Microsoft\Edge\Application\elevation_service.exe", false) != "allow")
+			failures.Add("edge elevation");
+		if (DecideOwn("smartscreen", new[] { "explorer" }, false) != "allow")
+			failures.Add("windows smartscreen");
+		if (DecideOwn("smartscreen", new[] { "msedgewebview2", "GuardexBrowser" }, false) != "stop")
+			failures.Add("own smartscreen");
+		if (DecideOwn("werfault", new[] { "msedgewebview2", "GuardexBrowser" }, false) != "stop")
+			failures.Add("own wer");
+		if (DecideOwn("microsoftedgeupdate", new[] { "GuardexBrowser" }, true) != "allow")
+			failures.Add("allowed own update");
+		if (DecideOwn("notepad", new[] { "GuardexBrowser" }, false) != "allow")
+			failures.Add("own notepad");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 }
@@ -348,9 +394,24 @@ sealed class LaunchGuard
 		{
 			if (row.Pid <= 4 || row.Pid == _self) continue;
 			if (!byPid.TryGetValue(row.Parent, out var parent)) continue;
-			if (!LaunchRules.IsBrowser(parent.Name)) continue;
-			var path = Image(row.Pid);
-			var act = LaunchRules.Decide(parent.Name, row.Name, path, allow.Contains(LaunchRules.Bare(row.Name)));
+			var child = LaunchRules.Bare(row.Name);
+			var allowed = allow.Contains(child);
+			string act;
+			if (LaunchRules.IsBrowser(parent.Name))
+			{
+				var path = Image(row.Pid);
+				act = LaunchRules.Decide(parent.Name, row.Name, path, allowed);
+				if (act == "allow" && LaunchRules.DecideOwn(row.Name, Ancestors(byPid, row.Parent), allowed) == "stop")
+					act = "stop";
+			}
+			else if (LaunchRules.OwnLeak(child))
+			{
+				act = LaunchRules.DecideOwn(row.Name, Ancestors(byPid, row.Parent), allowed);
+			}
+			else
+			{
+				continue;
+			}
 			if (act == "allow") continue;
 			handled.Add(row.Pid);
 			var stopped = false;
@@ -407,6 +468,21 @@ sealed class LaunchGuard
 		}
 		_store.SetLaunchAlert(DateTime.UtcNow < _launchUntil ? _launchText : "");
 		_store.SetFlowAlert(DateTime.UtcNow < _flowUntil ? _flowText : "");
+	}
+
+	static List<string> Ancestors(Dictionary<int, ProcList.Row> byPid, int parent)
+	{
+		var names = new List<string>(4);
+		var seen = new HashSet<int>();
+		var current = parent;
+		while (current > 0 && seen.Add(current) && names.Count < 16)
+		{
+			if (!byPid.TryGetValue(current, out var row)) break;
+			names.Add(row.Name);
+			if (row.Parent == current) break;
+			current = row.Parent;
+		}
+		return names;
 	}
 
 	static string LaunchLine(string name, string parent, string act, bool stopped, bool denied, bool stopOn)

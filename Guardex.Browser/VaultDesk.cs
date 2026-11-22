@@ -24,6 +24,10 @@ static class VaultDesk
 
 	public readonly record struct SeenCookie(string Name, string Value, string Domain, string Path, bool Secure, bool HttpOnly, bool Session, long Expires, string SameSite);
 
+	public readonly record struct SavedLogin(string Site, string User);
+
+	public readonly record struct CsvRow(string Site, string User, string Pass);
+
 	public static string Script { get; } = """
 		(function(){
 		if(window.__guardexVault)return;
@@ -122,6 +126,64 @@ static class VaultDesk
 		return box.TryPassword(site, out user, out pass);
 	}
 
+	public static SavedLogin[] Logins() => TryLive(false)?.Logins() ?? [];
+
+	public static CsvRow[] ReadCsv(string? text, out int skipped, out int empty)
+	{
+		skipped = 0;
+		empty = 0;
+		if (string.IsNullOrWhiteSpace(text) || text.Length > 2_000_000) return [];
+		var table = CsvTable(text.TrimStart('\uFEFF'));
+		if (table.Count < 2) return [];
+		var urlCol = Column(table[0], "url", "login_uri", "hostname", "origin");
+		var userCol = Column(table[0], "username", "user", "login");
+		var passCol = Column(table[0], "password", "pass");
+		if (urlCol < 0 || passCol < 0) return [];
+		var map = new Dictionary<string, CsvRow>(StringComparer.Ordinal);
+		for (var i = 1; i < table.Count; i++)
+		{
+			var row = table[i];
+			var pass = Cell(row, passCol);
+			if (pass.Length == 0 || pass.Length > 1024)
+			{
+				empty++;
+				continue;
+			}
+			var user = Cell(row, userCol);
+			if (user.Length > 256) user = user[..256];
+			if (!TrySite(Cell(row, urlCol), out var site))
+			{
+				skipped++;
+				continue;
+			}
+			map[site] = new CsvRow(site, user, pass);
+		}
+		return map.Values.ToArray();
+	}
+
+	public static string ImportNote(int saved, int skipped, int empty)
+	{
+		if (saved == 1) return "Saved 1 password.";
+		if (saved > 1) return "Saved " + saved + " passwords.";
+		if (skipped > 0) return "Those rows need an https address, so they were not saved.";
+		return "That file has no passwords to save.";
+	}
+
+	public static string ImportCsv(string? text)
+	{
+		var rows = ReadCsv(text, out var skipped, out var empty);
+		var saved = 0;
+		var failed = false;
+		foreach (var row in rows)
+		{
+			if (SavePassword(row.Site, row.User, row.Pass).Length == 0) saved++;
+			else failed = true;
+		}
+		if (saved > 0) return ImportNote(saved, 0, 0);
+		if (failed) return "This PC could not store the password.";
+		return ImportNote(0, skipped, empty);
+	}
+
 	public static bool SaveCookies(string site, IReadOnlyList<SeenCookie> cookies)
 	{
 		var box = TryLive(true);
@@ -204,6 +266,9 @@ static class VaultDesk
 		if (!box.SavePassword("https://example.com", "ada", "correct horse")) failures.Add("save");
 		if (!box.TryPassword("https://example.com", out var user, out var pass) || user != "ada" || pass != "correct horse")
 			failures.Add("open");
+		var listed = box.Logins();
+		if (listed.Length != 1 || listed[0].Site != "https://example.com" || listed[0].User != "ada")
+			failures.Add("logins");
 		if (box.TryPassword("https://other.example", out _, out _)) failures.Add("swap");
 		if (box.OfferSeen("https://example.com", "ada", "correct horse") != "") failures.Add("same");
 		if (box.OfferSeen("https://example.com", "ada", "next") != "update") failures.Add("update");
@@ -272,8 +337,89 @@ static class VaultDesk
 		{
 			failures.Add("shield open");
 		}
+		var chrome = "name,url,username,password,note\nExample,https://example.com/a,ada,one,hi\nBad,http://example.com/a,x,two,\nEmpty,https://example.org/,z,\nAgain,https://example.com/login,ada,three,x\n";
+		var rows = ReadCsv(chrome, out var skipped, out var empty);
+		if (skipped != 1 || empty != 1 || rows.Length != 1 || rows[0].Site != "https://example.com" || rows[0].User != "ada" || rows[0].Pass != "three")
+			failures.Add("csv chrome");
+		var fox = "\"url\",\"username\",\"password\",\"httpRealm\",\"formActionOrigin\",\"guid\",\"timeCreated\",\"timeLastUsed\",\"timePasswordChanged\"\n\"http://127.0.0.1:8080/a\",\"sam\",\"a,b\",\"\",\"\",\"g\",\"1\",\"2\",\"3\"\n\"javascript:alert(1)\",\"no\",\"p\",\"\",\"\",\"g\",\"1\",\"2\",\"3\"\n";
+		var foxRows = ReadCsv(fox, out var foxSkip, out var foxEmpty);
+		if (foxEmpty != 0 || foxSkip != 1 || foxRows.Length != 1 || foxRows[0].Site != "http://127.0.0.1:8080" || foxRows[0].User != "sam" || foxRows[0].Pass != "a,b")
+			failures.Add("csv firefox");
+		if (ReadCsv("https://example.com,ada,secret", out _, out _).Length != 0) failures.Add("csv header");
+		if (ImportNote(2, 1, 0) != "Saved 2 passwords."
+			|| ImportNote(1, 0, 0) != "Saved 1 password."
+			|| ImportNote(0, 3, 0) != "Those rows need an https address, so they were not saved."
+			|| ImportNote(0, 0, 2) != "That file has no passwords to save.")
+			failures.Add("csv note");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
+
+	static List<string[]> CsvTable(string text)
+	{
+		var rows = new List<string[]>();
+		var row = new List<string>();
+		var field = new StringBuilder();
+		var quoted = false;
+		for (var i = 0; i < text.Length; i++)
+		{
+			var ch = text[i];
+			if (quoted)
+			{
+				if (ch == '"')
+				{
+					if (i + 1 < text.Length && text[i + 1] == '"')
+					{
+						field.Append('"');
+						i++;
+					}
+					else quoted = false;
+				}
+				else field.Append(ch);
+				continue;
+			}
+			if (ch == '"' && field.Length == 0)
+			{
+				quoted = true;
+				continue;
+			}
+			if (ch == ',')
+			{
+				row.Add(field.ToString());
+				field.Clear();
+				continue;
+			}
+			if (ch is '\n' or '\r')
+			{
+				if (ch == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+				row.Add(field.ToString());
+				field.Clear();
+				if (row.Any(cell => cell.Length > 0)) rows.Add(row.ToArray());
+				row.Clear();
+				continue;
+			}
+			field.Append(ch);
+		}
+		if (field.Length > 0 || row.Count > 0)
+		{
+			row.Add(field.ToString());
+			if (row.Any(cell => cell.Length > 0)) rows.Add(row.ToArray());
+		}
+		return rows;
+	}
+
+	static int Column(string[] header, params string[] names)
+	{
+		foreach (var name in names)
+		{
+			for (var i = 0; i < header.Length; i++)
+			{
+				if (header[i].Trim().Equals(name, StringComparison.OrdinalIgnoreCase)) return i;
+			}
+		}
+		return -1;
+	}
+
+	static string Cell(string[] row, int index) => index >= 0 && index < row.Length ? row[index].Trim() : "";
 
 	static VaultBox? TryLive(bool create)
 	{
@@ -381,6 +527,18 @@ static class VaultDesk
 			{
 				CryptographicOperations.ZeroMemory(plain);
 			}
+		}
+
+		public SavedLogin[] Logins()
+		{
+			var list = new List<SavedLogin>();
+			foreach (var site in _index.Pass.ToArray())
+			{
+				if (!TryPassword(site, out var user, out var pass)) continue;
+				pass = "";
+				list.Add(new SavedLogin(site, user));
+			}
+			return list.ToArray();
 		}
 
 		public bool SaveCookies(string site, IReadOnlyList<SeenCookie> cookies)

@@ -166,6 +166,7 @@ public partial class SiteBrowser : UserControl
 	static readonly SolidColorBrush NavOn = MakeBrush(0x27, 0x32, 0x22);
 	static readonly SolidColorBrush TileFace = MakeBrush(0x27, 0x32, 0x22);
 	static readonly SolidColorBrush Ink = MakeBrush(0xE4, 0xEC, 0xDF);
+	static readonly SolidColorBrush Muted = MakeBrush(0x8E, 0xA0, 0x88);
 	static readonly SolidColorBrush PanelBrush = MakeBrush(0x1B, 0x21, 0x19);
 	static readonly SolidColorBrush LineBrush = MakeBrush(0x2C, 0x38, 0x28);
 	CoreWebView2Environment? _env;
@@ -190,6 +191,15 @@ public partial class SiteBrowser : UserControl
 	bool _pageFull;
 	bool _bookBar = true;
 	bool _adModeLock;
+	bool _startLock;
+	bool _passLock;
+	bool _passHere;
+	string _passSite = "";
+	string _passStamp = "";
+	string? _keptAddress;
+	VaultDesk.SavedLogin[] _logins = [];
+	readonly Dictionary<string, string> _shownPasses = new(StringComparer.Ordinal);
+	readonly List<System.Windows.Controls.TextBox> _passBoxes = new();
 	bool _addressLock;
 	bool _addressSelectAll;
 	int _suggestPick = -1;
@@ -220,8 +230,11 @@ public partial class SiteBrowser : UserControl
 		AskHint.Text = "Type " + TorrentDesk.Phrase + ". This choice is remembered.";
 		LoadBookBar();
 		HomeDesk.Load();
+		StartDesk.Load();
 		PaintHome();
+		PaintStart();
 		ShowSection("general");
+		Favicon.Watch(() => Dispatcher.BeginInvoke(new Action(FillLists)));
 		AdBlock.Shared.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
 		{
 			PaintAds();
@@ -281,6 +294,7 @@ public partial class SiteBrowser : UserControl
 	public void ParkSignIns()
 	{
 		if (_parked) return;
+		ClearShown();
 		_parked = true;
 		_parking = true;
 		ClearVaultPrompt();
@@ -323,19 +337,12 @@ public partial class SiteBrowser : UserControl
 		{
 			Directory.CreateDirectory(Root);
 			_history.AddRange(SiteDesk.ReadVisits(ReadFile(HistoryFile), SiteDesk.HistoryMax));
-			_bookmarks.AddRange(SiteDesk.ReadVisits(ReadFile(BookmarkFile), SiteDesk.BookmarkMax));
+			_bookmarks.AddRange(SiteDesk.ReadMarks(ReadFile(BookmarkFile), SiteDesk.BookmarkMax));
 			FillLists();
 			PaintHome();
 			await SweepProfile();
-			var urls = SiteDesk.ReadSession(ReadFile(SessionFile));
-			if (urls.Count == 0)
-			{
-				await AddTab(null, true, true);
-				return;
-			}
-			foreach (var url in urls)
-				await AddTab(url, false, false);
-			if (_tabs.Count > 0) Select(_tabs[0]);
+			var home = StartDesk.HomeTarget();
+			await AddTab(home.Length == 0 ? null : home, true, home.Length == 0);
 		}
 		catch (Exception ex)
 		{
@@ -386,7 +393,8 @@ public partial class SiteBrowser : UserControl
 		var options = new CoreWebView2EnvironmentOptions(Guardex.Browser.SocksGate.BrowserArguments(_proxyPort))
 		{
 			AllowSingleSignOnUsingOSPrimaryAccount = false,
-			ExclusiveUserDataFolderAccess = true
+			ExclusiveUserDataFolderAccess = true,
+			IsCustomCrashReportingEnabled = true
 		};
 		_env = await CoreWebView2Environment.CreateAsync(null, folder, options);
 	}
@@ -482,6 +490,7 @@ public partial class SiteBrowser : UserControl
 		_ = core.AddScriptToExecuteOnDocumentCreatedAsync(VaultDesk.Script);
 		core.SourceChanged += (_, _) =>
 		{
+			if (tab == Active && SiteDesk.IsPage(core.Source)) _keptAddress = null;
 			if (!string.IsNullOrWhiteSpace(core.Source)) tab.PageUrl = core.Source;
 			if (tab == Active)
 			{
@@ -765,13 +774,14 @@ public partial class SiteBrowser : UserControl
 		if (core != null) ReleaseSitesNow(core);
 		ViewHost.Children.Remove(tab.View);
 		try { tab.View.Dispose(); } catch { }
-		if (_tabs.Count == 0) _ = AddTab(null, true, true);
+		if (_tabs.Count == 0) OpenTab(true);
 		else Select(_tabs[Math.Min(Math.Max(index, 0), _tabs.Count - 1)]);
 		SaveSession();
 	}
 
 	void Go()
 	{
+		_keptAddress = null;
 		var typed = Address.Text.Trim();
 		if (typed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
 		{
@@ -798,7 +808,19 @@ public partial class SiteBrowser : UserControl
 
 	void GoUrl(string url)
 	{
-		if (!SiteDesk.IsPage(url)) return;
+		if (!SiteDesk.IsPage(url))
+		{
+			var text = SiteDesk.Kept(url);
+			if (text.Length == 0) return;
+			_historyOpen = false;
+			_keptAddress = text;
+			CloseSettings();
+			CloseSuggest();
+			SetNote("That bookmark is saved. This browser opens http and https pages.");
+			PaintChrome();
+			return;
+		}
+		_keptAddress = null;
 		CloseSettings();
 		CloseSuggest();
 		_historyOpen = false;
@@ -877,14 +899,15 @@ public partial class SiteBrowser : UserControl
 		if (!Address.IsKeyboardFocusWithin)
 		{
 			_addressLock = true;
-			Address.Text = SiteDesk.IsPage(url) ? url : "";
+			Address.Text = _keptAddress ?? (SiteDesk.IsPage(url) ? url : "");
 			_addressLock = false;
-			CloseSuggest();
+			if (_keptAddress == null) CloseSuggest();
 		}
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
 		StarButton.Content = SiteDesk.IsMarked(_bookmarks, url) ? "\uE735" : "\uE734";
 		PaintZoom();
 		PaintCalls();
+		if (_settingsOpen && _settingsSection == "passwords") PaintPasswords();
 	}
 
 	void ApplyViews(bool showPage)
@@ -1015,12 +1038,24 @@ public partial class SiteBrowser : UserControl
 
 	void FillLists()
 	{
-		foreach (var item in _bookmarks) item.Icon = Favicon.Image(item.Url);
-		foreach (var item in _history) item.Icon = Favicon.Image(item.Url);
+		foreach (var item in _bookmarks)
+		{
+			item.Icon = Favicon.Image(item.Url);
+			Favicon.Queue(item.Url);
+		}
+		foreach (var item in _history)
+		{
+			item.Icon = Favicon.Image(item.Url);
+			Favicon.Queue(item.Url);
+		}
 		BookmarkList.ItemsSource = _bookmarks.ToList();
 		HistoryList.ItemsSource = _history.Take(80).ToList();
 		BookBarList.ItemsSource = _bookmarks.ToList();
-		foreach (var item in HomeDesk.Items) item.RefreshIcon();
+		foreach (var item in HomeDesk.Items)
+		{
+			item.RefreshIcon();
+			Favicon.Queue(item.Url);
+		}
 	}
 
 	async Task SweepProfile()
@@ -1318,7 +1353,7 @@ public partial class SiteBrowser : UserControl
 				var tab = Active;
 				if (tab != null && VaultDesk.TrySite(tab.PageUrl, out var page) && page == site)
 					_ = KeepCookies(tab, site);
-				PaintVault();
+				RefreshLogins();
 				return;
 			}
 			if (kind != "fill") return;
@@ -1348,10 +1383,25 @@ public partial class SiteBrowser : UserControl
 		}
 	}
 
-	void PaintVault()
+	void RefreshLogins()
 	{
-		var count = VaultDesk.Remembered();
-		VaultCount.Text = count == 0 ? "No saved sign-ins." : count == 1 ? "1 saved sign-in." : count + " saved sign-ins.";
+		_passStamp = "";
+		try { _logins = VaultDesk.Logins(); }
+		catch { _logins = []; }
+		if (_settingsOpen && _settingsSection == "passwords") PaintPasswords();
+	}
+
+	void ClearShown()
+	{
+		foreach (var site in _shownPasses.Keys.ToArray()) _shownPasses[site] = "";
+		_shownPasses.Clear();
+		_passStamp = "";
+		if (_settingsOpen && _settingsSection == "passwords") PaintPasswords();
+		else
+		{
+			foreach (var box in _passBoxes) box.Text = "";
+			_passBoxes.Clear();
+		}
 	}
 
 	void SetNote(string text)
@@ -1374,7 +1424,7 @@ public partial class SiteBrowser : UserControl
 	}
 
 	void SaveHistory() => WriteFile(HistoryFile, SiteDesk.WriteVisits(_history));
-	void SaveBookmarks() => WriteFile(BookmarkFile, SiteDesk.WriteVisits(_bookmarks));
+	void SaveBookmarks() => WriteFile(BookmarkFile, SiteDesk.WriteMarks(_bookmarks));
 
 	void SaveSession()
 	{
@@ -1466,7 +1516,7 @@ public partial class SiteBrowser : UserControl
 		else if (key == Key.F12) { DevTools(); handled = true; }
 		else if (ctrl && key == Key.L) { Address.Focus(); Address.SelectAll(); handled = true; }
 		else if (ctrl && shift && key == Key.T) { Reopen(); handled = true; }
-		else if (ctrl && key == Key.T) { _ = AddTab(null, true, true); handled = true; }
+		else if (ctrl && key == Key.T) { OpenTab(false); handled = true; }
 		else if (ctrl && key == Key.W) { if (Active != null) CloseTab(Active); handled = true; }
 		else if (ctrl && key == Key.Tab) { Cycle(shift ? -1 : 1); handled = true; }
 		else if (ctrl && key == Key.F) { ShowFind(); handled = true; }
@@ -1606,11 +1656,41 @@ public partial class SiteBrowser : UserControl
 		catch (Exception ex) { SetNote(ex.Message); }
 	}
 
-	void OnNewTab(object sender, RoutedEventArgs e)
+	void OnNewTab(object sender, RoutedEventArgs e) => OpenTab(false);
+
+	void OpenTab(bool keepChrome)
+	{
+		if (!keepChrome)
+		{
+			CloseMenu();
+			CloseSettings();
+		}
+		_keptAddress = null;
+		var target = StartDesk.TabTarget();
+		_ = AddTab(target.Length == 0 ? null : target, true, target.Length == 0);
+	}
+
+	void OnHome(object sender, RoutedEventArgs e)
 	{
 		CloseMenu();
-		CloseSettings();
-		_ = AddTab(null, true, true);
+		var target = StartDesk.HomeTarget();
+		_keptAddress = null;
+		if (target.Length == 0)
+		{
+			CloseSettings();
+			CloseSuggest();
+			_historyOpen = false;
+			var core = Active?.View.CoreWebView2;
+			if (core == null)
+			{
+				SetNote("The page is not ready.");
+				return;
+			}
+			SetNote("");
+			core.Navigate("about:blank");
+			return;
+		}
+		GoUrl(target);
 	}
 	void OnBack(object sender, RoutedEventArgs e) => Back();
 	void OnForward(object sender, RoutedEventArgs e) => Forward();
@@ -1680,7 +1760,6 @@ public partial class SiteBrowser : UserControl
 		SetNote(saved
 			? "Sign-in for " + VaultDesk.Label(site) + " is protected on this PC."
 			: "This page has no sign-in cookie to protect.");
-		PaintVault();
 	}
 	void OnForgetSignIn(object sender, RoutedEventArgs e)
 	{
@@ -1698,7 +1777,8 @@ public partial class SiteBrowser : UserControl
 		_liveSites.Remove(site);
 		if (_vaultPage == site) DismissVault();
 		if (had) SetNote("Sign-in for " + VaultDesk.Label(site) + " was forgotten on this PC.");
-		PaintVault();
+		_shownPasses.Remove(site);
+		RefreshLogins();
 	}
 	void OnForgetSignIns(object sender, RoutedEventArgs e)
 	{
@@ -1706,6 +1786,7 @@ public partial class SiteBrowser : UserControl
 		var sites = VaultDesk.SignSites();
 		var names = new Dictionary<string, string[]>(StringComparer.Ordinal);
 		foreach (var site in sites) names[site] = VaultDesk.CookieNames(site);
+		foreach (var site in _logins) names.TryAdd(site.Site, VaultDesk.CookieNames(site.Site));
 		VaultDesk.ForgetAll();
 		if (core != null)
 		{
@@ -1720,7 +1801,9 @@ public partial class SiteBrowser : UserControl
 		}
 		_liveSites.Clear();
 		ClearVaultPrompt();
-		PaintVault();
+		foreach (var site in _shownPasses.Keys.ToArray()) _shownPasses[site] = "";
+		_shownPasses.Clear();
+		RefreshLogins();
 		SetNote("Saved sign-ins were forgotten on this PC.");
 	}
 	void OnSettingsNav(object sender, RoutedEventArgs e)
@@ -1773,6 +1856,7 @@ public partial class SiteBrowser : UserControl
 
 	void OnAddressChanged(object sender, TextChangedEventArgs e)
 	{
+		if (!_addressLock) _keptAddress = null;
 		AddressHint.Visibility = Address.Text.Length == 0 && !Address.IsKeyboardFocusWithin ? Visibility.Visible : Visibility.Collapsed;
 		if (_addressLock || !Address.IsKeyboardFocusWithin) return;
 		ShowSuggest();
@@ -1887,14 +1971,8 @@ public partial class SiteBrowser : UserControl
 
 	void OnVisitOpen(object sender, MouseButtonEventArgs e)
 	{
-		if (sender is not ListBox box || box.SelectedItem is not SiteVisit visit || !SiteDesk.IsPage(visit.Url)) return;
-		var core = Active?.View.CoreWebView2;
-		if (core == null) return;
-		_historyOpen = false;
-		CloseSettings();
-		SetNote("");
-		core.Navigate(visit.Url);
-		PaintChrome();
+		if (sender is not ListBox box || box.SelectedItem is not SiteVisit visit) return;
+		GoUrl(visit.Url);
 	}
 
 	void OnClearHistory(object sender, RoutedEventArgs e)
@@ -2290,22 +2368,26 @@ public partial class SiteBrowser : UserControl
 	{
 		if (!_settingsOpen) return;
 		_settingsOpen = false;
+		ClearShown();
 		SettingsPage.Visibility = Visibility.Collapsed;
 		PaintChrome();
 	}
 
 	void ShowSection(string name)
 	{
+		if (_settingsSection == "passwords" && name != "passwords") ClearShown();
 		_settingsSection = name;
 		PageGeneral.Visibility = name == "general" ? Visibility.Visible : Visibility.Collapsed;
 		PageDownloads.Visibility = name == "downloads" ? Visibility.Visible : Visibility.Collapsed;
 		PageVpn.Visibility = name == "vpn" ? Visibility.Visible : Visibility.Collapsed;
 		PagePrivacy.Visibility = name == "privacy" ? Visibility.Visible : Visibility.Collapsed;
-		if (name == "privacy") PaintVault();
+		PagePasswords.Visibility = name == "passwords" ? Visibility.Visible : Visibility.Collapsed;
+		if (name == "passwords") RefreshLogins();
 		MarkNav(NavGeneral, name == "general");
 		MarkNav(NavDownloads, name == "downloads");
 		MarkNav(NavVpn, name == "vpn");
 		MarkNav(NavPrivacy, name == "privacy");
+		MarkNav(NavPasswords, name == "passwords");
 	}
 
 	static void MarkNav(Button button, bool on)
@@ -2597,6 +2679,225 @@ public partial class SiteBrowser : UserControl
 
 	void OnHomeProvider(object sender, RoutedEventArgs e) =>
 		HomeProviderPopup.IsOpen = !HomeProviderPopup.IsOpen;
+
+	void PaintStart()
+	{
+		_startLock = true;
+		HomePage.IsChecked = StartDesk.HomeMode != StartDesk.Custom;
+		HomeCustom.IsChecked = StartDesk.HomeMode == StartDesk.Custom;
+		TabHome.IsChecked = StartDesk.TabMode == StartDesk.Home;
+		TabPage.IsChecked = StartDesk.TabMode == StartDesk.Page;
+		TabCustom.IsChecked = StartDesk.TabMode == StartDesk.Custom;
+		HomeCustomUrl.Text = StartDesk.HomeUrl;
+		TabCustomUrl.Text = StartDesk.TabUrl;
+		_startLock = false;
+		PaintStartNotes();
+	}
+
+	void PaintStartNotes()
+	{
+		var homeCustom = StartDesk.HomeMode == StartDesk.Custom;
+		var tabCustom = StartDesk.TabMode == StartDesk.Custom;
+		HomeCustomUrl.Visibility = homeCustom ? Visibility.Visible : Visibility.Collapsed;
+		TabCustomUrl.Visibility = tabCustom ? Visibility.Visible : Visibility.Collapsed;
+		var homeBad = homeCustom && HomeCustomUrl.Text.Trim().Length > 0 && StartDesk.PageTarget(HomeCustomUrl.Text).Length == 0;
+		var tabBad = tabCustom && TabCustomUrl.Text.Trim().Length > 0 && StartDesk.PageTarget(TabCustomUrl.Text).Length == 0;
+		HomeCustomNote.Visibility = homeBad ? Visibility.Visible : Visibility.Collapsed;
+		TabCustomNote.Visibility = tabBad ? Visibility.Visible : Visibility.Collapsed;
+	}
+
+	void OnStartChoice(object sender, RoutedEventArgs e)
+	{
+		if (_startLock || sender is not System.Windows.Controls.Primitives.ToggleButton box || box.IsChecked != true) return;
+		var name = (sender as FrameworkElement)?.Name;
+		if (name is "HomePage" or "HomeCustom")
+			StartDesk.SetHome(name == "HomeCustom" ? StartDesk.Custom : StartDesk.Page, HomeCustomUrl.Text);
+		else if (name is "TabHome" or "TabPage" or "TabCustom")
+		{
+			var mode = name == "TabCustom" ? StartDesk.Custom : name == "TabPage" ? StartDesk.Page : StartDesk.Home;
+			StartDesk.SetTab(mode, TabCustomUrl.Text);
+		}
+		PaintStart();
+	}
+
+	void OnStartUrl(object sender, RoutedEventArgs e)
+	{
+		if (_startLock) return;
+		StartDesk.SetHome(StartDesk.HomeMode, HomeCustomUrl.Text);
+		StartDesk.SetTab(StartDesk.TabMode, TabCustomUrl.Text);
+		PaintStartNotes();
+	}
+
+	void OnStartUrlKey(object sender, KeyEventArgs e)
+	{
+		if (e.Key != Key.Enter) return;
+		e.Handled = true;
+		OnStartUrl(sender, e);
+	}
+
+	void OnPassFilter(object sender, RoutedEventArgs e)
+	{
+		if (_passLock || sender is not System.Windows.Controls.Primitives.ToggleButton box || box.IsChecked != true) return;
+		_passHere = (sender as FrameworkElement)?.Name == "PassHere";
+		if (_passHere && VaultDesk.TrySite(Active?.PageUrl, out var site)) _passSite = site;
+		_passStamp = "";
+		PaintPasswords();
+	}
+
+	void OnImportPasswords(object sender, RoutedEventArgs e)
+	{
+		var dlg = new Microsoft.Win32.OpenFileDialog
+		{
+			Filter = "CSV (*.csv)|*.csv|All files (*.*)|*.*",
+			Title = "Import passwords"
+		};
+		if (dlg.ShowDialog() != true) return;
+		try
+		{
+			PassImportNote.Text = VaultDesk.ImportCsv(File.ReadAllText(dlg.FileName));
+		}
+		catch
+		{
+			PassImportNote.Text = "That file could not be read.";
+		}
+		RefreshLogins();
+	}
+
+	void PaintPasswords()
+	{
+		var page = Active?.PageUrl ?? "";
+		if (page.Length == 0) page = Active?.View.CoreWebView2?.Source ?? "";
+		var here = "";
+		if (VaultDesk.TrySite(page, out var site) && _logins.Any(row => row.Site == site)) here = site;
+		if (_passHere && here != _passSite) _passHere = false;
+		var showFilter = here.Length > 0 && _logins.Length > 0;
+		PassFilter.Visibility = showFilter ? Visibility.Visible : Visibility.Collapsed;
+		_passLock = true;
+		PassAll.IsChecked = !_passHere;
+		PassHere.IsChecked = _passHere && showFilter;
+		_passLock = false;
+		var shown = _passHere && here.Length > 0 ? _logins.Where(row => row.Site == here).ToArray() : _logins;
+		PassEmpty.Visibility = _logins.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+		PassForget.Visibility = _logins.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+		var stamp = (_passHere ? "1:" : "0:") + here + "\n" + string.Join("\n", shown.Select(row => row.Site + "\t" + row.User));
+		if (stamp == _passStamp) return;
+		_passStamp = stamp;
+		_passBoxes.Clear();
+		PassRows.Children.Clear();
+		foreach (var row in shown) PassRows.Children.Add(PassRow(row));
+	}
+
+	System.Windows.Controls.Border PassRow(VaultDesk.SavedLogin row)
+	{
+		var revealed = _shownPasses.TryGetValue(row.Site, out var pass) && pass.Length > 0;
+		var box = new System.Windows.Controls.TextBox
+		{
+			Text = revealed ? pass : "••••••••",
+			IsReadOnly = true,
+			BorderThickness = new Thickness(0),
+			Background = Brushes.Transparent,
+			Foreground = Ink,
+			FontFamily = new FontFamily("Consolas"),
+			Margin = new Thickness(0, 4, 0, 0)
+		};
+		_passBoxes.Add(box);
+		var toggle = new Button
+		{
+			Content = revealed ? "Hide" : "Show",
+			MinWidth = 72,
+			Margin = new Thickness(8, 0, 0, 0),
+			Padding = new Thickness(10, 4, 10, 4),
+			Tag = row.Site
+		};
+		toggle.Click += (_, _) => TogglePass(row.Site, box, toggle);
+		var remove = new Button
+		{
+			Content = "Remove",
+			Margin = new Thickness(8, 0, 0, 0),
+			Padding = new Thickness(10, 4, 10, 4),
+			Tag = row.Site
+		};
+		remove.Click += (_, _) => ForgetOne(row.Site);
+		var actions = new StackPanel
+		{
+			Orientation = System.Windows.Controls.Orientation.Horizontal,
+			HorizontalAlignment = HorizontalAlignment.Right
+		};
+		actions.Children.Add(toggle);
+		actions.Children.Add(remove);
+		var names = new StackPanel();
+		names.Children.Add(new TextBlock
+		{
+			Text = VaultDesk.Label(row.Site),
+			FontWeight = FontWeights.SemiBold,
+			Foreground = Ink
+		});
+		names.Children.Add(new TextBlock
+		{
+			Text = row.User.Length == 0 ? "No username" : row.User,
+			Foreground = Muted,
+			Margin = new Thickness(0, 2, 0, 0)
+		});
+		var head = new DockPanel();
+		DockPanel.SetDock(actions, Dock.Right);
+		head.Children.Add(actions);
+		head.Children.Add(names);
+		var stack = new StackPanel();
+		stack.Children.Add(head);
+		stack.Children.Add(box);
+		return new System.Windows.Controls.Border
+		{
+			BorderBrush = LineBrush,
+			BorderThickness = new Thickness(0, 0, 0, 1),
+			Padding = new Thickness(0, 8, 0, 8),
+			Child = stack
+		};
+	}
+
+	void TogglePass(string site, System.Windows.Controls.TextBox box, Button toggle)
+	{
+		if (_shownPasses.ContainsKey(site))
+		{
+			_shownPasses[site] = "";
+			_shownPasses.Remove(site);
+			box.Text = "••••••••";
+			toggle.Content = "Show";
+			return;
+		}
+		if (!VaultDesk.TryPassword(site, out _, out var pass) || pass.Length == 0)
+		{
+			SetNote("The saved password could not be opened.");
+			return;
+		}
+		_shownPasses[site] = pass;
+		box.Text = pass;
+		toggle.Content = "Hide";
+	}
+
+	void ForgetOne(string site)
+	{
+		var core = AnyCore();
+		var names = VaultDesk.CookieNames(site);
+		VaultDesk.ForgetSite(site);
+		if (core != null)
+		{
+			foreach (var name in names)
+			{
+				if (name.Length == 0) continue;
+				try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
+			}
+		}
+		_liveSites.Remove(site);
+		if (_shownPasses.TryGetValue(site, out var shown))
+		{
+			_shownPasses[site] = "";
+			_shownPasses.Remove(site);
+			shown = "";
+		}
+		if (_vaultPage == site) DismissVault();
+		RefreshLogins();
+		SetNote("Sign-in for " + VaultDesk.Label(site) + " was forgotten on this PC.");
+	}
 
 	void OnHomeProviderPick(object sender, RoutedEventArgs e)
 	{

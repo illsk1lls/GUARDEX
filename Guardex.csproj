@@ -11,7 +11,7 @@
     <RootNamespace>Guardex</RootNamespace>
     <AssemblyName>Guardex</AssemblyName>
     <ApplicationTitle>GUARDEX</ApplicationTitle>
-    <Version>0.6.4</Version>
+    <Version>0.6.5</Version>
     <ApplicationIcon>assets\guardex.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

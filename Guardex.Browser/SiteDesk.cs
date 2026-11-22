@@ -26,7 +26,19 @@ public sealed class SiteVisit : INotifyPropertyChanged
 	}
 
 	[JsonIgnore]
-	public string Mark => Favicon.Letter(Url);
+	public string Mark
+	{
+		get
+		{
+			var letter = Favicon.Letter(Url);
+			if (letter.Length > 0) return letter;
+			foreach (var ch in Url)
+			{
+				if (char.IsAsciiLetterOrDigit(ch)) return char.ToUpperInvariant(ch).ToString();
+			}
+			return "";
+		}
+	}
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -51,6 +63,20 @@ static class SiteDesk
 		if (string.IsNullOrWhiteSpace(url) || url.Length > 2000) return false;
 		if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
 		return uri.Scheme is "http" or "https" && uri.Host.Length > 0;
+	}
+
+	public static bool IsKept(string? url) => Kept(url).Length > 0;
+
+	public static string Kept(string? url)
+	{
+		if (string.IsNullOrWhiteSpace(url)) return "";
+		var text = url.Trim();
+		if (text.Length == 0 || text.Length > 2000) return "";
+		foreach (var ch in text)
+		{
+			if (char.IsControl(ch)) return "";
+		}
+		return text;
 	}
 
 	public static bool Remember(List<SiteVisit> items, string? title, string? url, int max = HistoryMax)
@@ -87,6 +113,47 @@ static class SiteDesk
 		items.Insert(0, new SiteVisit { Utc = DateTime.UtcNow.ToString("o"), Title = cleanTitle, Url = url! });
 		if (items.Count > BookmarkMax) items.RemoveRange(BookmarkMax, items.Count - BookmarkMax);
 		return true;
+	}
+
+	public static string WriteMarks(IReadOnlyList<SiteVisit> items)
+	{
+		var lines = new List<string>();
+		foreach (var item in items)
+		{
+			var url = Kept(item.Url);
+			if (url.Length == 0) continue;
+			lines.Add(JsonSerializer.Serialize(new SiteVisit
+			{
+				Utc = item.Utc,
+				Title = OneLine(item.Title),
+				Url = url
+			}));
+		}
+		return string.Join('\n', lines);
+	}
+
+	public static List<SiteVisit> ReadMarks(string? text, int max)
+	{
+		var items = new List<SiteVisit>();
+		if (string.IsNullOrWhiteSpace(text)) return items;
+		foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		{
+			try
+			{
+				var item = JsonSerializer.Deserialize<SiteVisit>(line);
+				var url = Kept(item?.Url);
+				if (item == null || url.Length == 0) continue;
+				item.Url = url;
+				item.Title = OneLine(item.Title);
+				if (item.Title.Length == 0) item.Title = item.Url;
+				items.Add(item);
+				if (items.Count >= max) break;
+			}
+			catch (JsonException)
+			{
+			}
+		}
+		return items;
 	}
 
 	public static string WriteVisits(IReadOnlyList<SiteVisit> items)
@@ -304,6 +371,24 @@ static class SiteDesk
 			failures.Add("suggest " + string.Join(",", hits.Select(item => item.Url)));
 		if (Suggest(bookmarks, past, "   ", 8).Count != 0) failures.Add("suggest blank");
 		if (Suggest(bookmarks, past, "missing", 8).Count != 0) failures.Add("suggest miss");
+
+		if (!IsKept("javascript:alert(1)") || !IsKept("file:///c/windows") || !IsKept("about:blank") || !IsKept("not a url"))
+			failures.Add("kept");
+		if (IsKept("bad\nurl") || IsKept("  ") || IsKept(new string('a', 2001))) failures.Add("kept drop");
+		var kept = new List<SiteVisit>
+		{
+			new() { Title = "Js", Url = " javascript:alert(1) " },
+			new() { Title = "File", Url = "file:///c/windows" },
+			new() { Title = "Words", Url = "not a url" },
+			new() { Title = "Page", Url = "https://example.com/a" },
+			new() { Title = "Ctl", Url = "has\tcontrol" }
+		};
+		var restored = ReadMarks(WriteMarks(kept), 10);
+		if (restored.Count != 4 || restored[0].Url != "javascript:alert(1)" || restored[1].Url != "file:///c/windows"
+			|| restored[2].Url != "not a url" || restored[3].Url != "https://example.com/a")
+			failures.Add("marks " + restored.Count);
+		if (new SiteVisit { Url = "not a url" }.Mark != "N") failures.Add("mark text");
+		if (new SiteVisit { Url = "https://en.wikipedia.org/" }.Mark != "E") failures.Add("mark host");
 
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
