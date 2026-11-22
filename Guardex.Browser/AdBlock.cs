@@ -176,9 +176,18 @@ sealed class AdBlock
 		if (!script.Contains("guardex-ads", StringComparison.Ordinal) || !script.Contains(".ad-box", StringComparison.Ordinal))
 			failures.Add("script");
 		if (!script.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player");
+		var tube = FilterSet.Parse("||youtube.com^\n@@||www.youtube.com^$generichide\n##.ad-box\n");
+		if (!tube.Blocks("https://news.example/", "https://www.youtube.com/embed/x", "subdocument", false))
+			failures.Add("generichide network");
+		var tubeScript = tube.Script();
+		if (!tubeScript.Contains("www.youtube.com", StringComparison.Ordinal) || !tubeScript.Contains("genericOff", StringComparison.Ordinal))
+			failures.Add("generichide");
 		var bare = FilterSet.Parse("");
 		var bareScript = bare.Script();
 		if (!bareScript.Contains("guardex-player", StringComparison.Ordinal)) failures.Add("player only");
+		if (bareScript.Contains("ytInitialData", StringComparison.Ordinal) || bareScript.Contains("depth>", StringComparison.Ordinal))
+			failures.Add("yt walk");
+		if (!bareScript.Contains("ytInitialPlayerResponse", StringComparison.Ordinal)) failures.Add("yt arm");
 		if (bareScript.Contains("guardex-ads", StringComparison.Ordinal)) failures.Add("empty css");
 		if (!bare.Blocks("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/api/stats/ads?v=1", "xmlhttprequest", false))
 			failures.Add("yt ads");
@@ -419,6 +428,7 @@ sealed class AdBlock
 		readonly HashSet<string> _globalBan = new(StringComparer.Ordinal);
 		readonly Dictionary<string, List<string>> _specific = new(StringComparer.OrdinalIgnoreCase);
 		readonly Dictionary<string, List<string>> _ban = new(StringComparer.OrdinalIgnoreCase);
+		readonly HashSet<string> _genericHide = new(StringComparer.OrdinalIgnoreCase);
 		string? _script;
 
 		public int Network { get; private set; }
@@ -546,9 +556,12 @@ sealed class AdBlock
 				Obj(sb, _specific);
 				sb.Append(";var ban=");
 				Obj(sb, _ban);
+				sb.Append(";var genericHide=");
+				Map(sb, _genericHide.ToDictionary(item => item, _ => 1));
 				sb.Append(";function walk(host,fn){var parts=(host||'').split('.');for(var i=0;i<parts.length;i++){var d=parts.slice(i).join('.');if(d)fn(d);}}");
+				sb.Append("function genericOff(host){var off=false;walk(host,function(d){if(genericHide[d])off=true;});return off;}");
 				sb.Append("function build(host){var set={};for(var k in globalBan)set[k]=1;walk(host,function(d){var list=ban[d];if(list)for(var j=0;j<list.length;j++)set[list[j]]=1;});");
-				sb.Append("var css='',lines=generic.length?generic.split('\\n'):[],extra=[];");
+				sb.Append("var css='',lines=genericOff(host)||!generic.length?[]:generic.split('\\n'),extra=[];");
 				sb.Append("for(var n=0;n<lines.length;n++){var s=lines[n];if(s&&!set[s])css+=s+'{display:none!important}\\n';}");
 				sb.Append("walk(host,function(d){var list=specific[d];if(!list)return;for(var j=0;j<list.length;j++)if(!set[list[j]])extra.push(list[j]);});");
 				sb.Append("for(var m=0;m<extra.length;m++)css+=extra[m]+'{display:none!important}\\n';return css;}");
@@ -569,19 +582,11 @@ sealed class AdBlock
 			if(window.__guardexPlayer)return;
 			window.__guardexPlayer=1;
 			/* guardex-player */
-			function scrub(node,depth){
-			  if(window.__guardexPlayerStop||!node||typeof node!=='object'||depth>12)return;
-			  if(Object.prototype.toString.call(node)==='[object Array]'){
-			    for(var i=0;i<node.length;i++)scrub(node[i],depth+1);
-			    return;
-			  }
+			function clearAds(node){
+			  if(!node||typeof node!=='object')return;
 			  try{if(node.adPlacements)node.adPlacements=[];}catch(e){}
 			  try{if(node.playerAds)node.playerAds=[];}catch(e){}
 			  try{if(node.adSlots)node.adSlots=[];}catch(e){}
-			  for(var key in node){
-			    if(key==='adPlacements'||key==='playerAds'||key==='adSlots')continue;
-			    try{scrub(node[key],depth+1);}catch(e){}
-			  }
 			}
 			function arm(name){
 			  var slot;
@@ -589,18 +594,17 @@ sealed class AdBlock
 			    Object.defineProperty(window,name,{
 			      configurable:true,enumerable:true,
 			      get:function(){return slot;},
-			      set:function(value){try{scrub(value,0);}catch(e){}slot=value;}
+			      set:function(value){try{clearAds(value);}catch(e){}slot=value;}
 			    });
 			  }catch(e){}
 			}
 			arm('ytInitialPlayerResponse');
-			arm('ytInitialData');
 			if(!window.__guardexParse)window.__guardexParse=JSON.parse;
 			JSON.parse=function(text,reviver){
 			  var value=window.__guardexParse.call(JSON,text,reviver);
 			  try{
-			    if(!window.__guardexPlayerStop&&typeof text==='string'&&(text.indexOf('adPlacements')>=0||text.indexOf('playerAds')>=0||text.indexOf('adSlots')>=0))
-			      scrub(value,0);
+			    if(!window.__guardexPlayerStop&&value&&typeof value==='object'&&(value.playabilityStatus||value.videoDetails))
+			      clearAds(value);
 			  }catch(e){}
 			  return value;
 			};
@@ -630,6 +634,7 @@ sealed class AdBlock
 			if (line.Length == 0 || line.Length > 16384 || line[0] == '!' || line[0] == '[') return;
 			if (line.Contains("#?#", StringComparison.Ordinal) || line.Contains("#$#", StringComparison.Ordinal)) return;
 			if (TakeCosmetic(line)) return;
+			if (TakeGenericHide(line)) return;
 			var rule = Rule.Try(line);
 			if (rule == null) return;
 			Network++;
@@ -641,6 +646,30 @@ sealed class AdBlock
 			var token = LongestToken(rule.Body);
 			if (token.Length >= 4) Add(_tokens, token, rule);
 			else _slow.Add(rule);
+		}
+
+		bool TakeGenericHide(string line)
+		{
+			if (!line.StartsWith("@@", StringComparison.Ordinal)) return false;
+			var dollar = line.IndexOf('$');
+			if (dollar < 0) return false;
+			var hide = false;
+			foreach (var raw in line[(dollar + 1)..].Split(','))
+			{
+				var bare = raw.Trim().ToLowerInvariant();
+				if (bare.Length == 0) continue;
+				if (bare is "generichide" or "ghide") hide = true;
+				else return false;
+			}
+			if (!hide) return false;
+			var pattern = line[2..dollar].Trim();
+			if (!pattern.StartsWith("||", StringComparison.Ordinal)) return false;
+			pattern = pattern[2..];
+			var n = 0;
+			while (n < pattern.Length && IsHostChar(pattern[n])) n++;
+			if (n == 0) return false;
+			_genericHide.Add(pattern[..n].ToLowerInvariant());
+			return true;
 		}
 
 		bool TakeCosmetic(string line)
