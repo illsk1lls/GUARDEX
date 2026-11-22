@@ -49,11 +49,57 @@ static class VaultDesk
 		  }
 		  return {t:'save',u:user,p:pass.value};
 		}
-		document.addEventListener('submit',function(ev){
-		  if(!pageOk())return;
-		  var got=read(ev.target);
+		function send(root){
+		  var got=read(root);
 		  if(!got)return;
 		  try{chrome.webview.postMessage(got);}catch(e){}
+		}
+		function formOf(el){
+		  if(!el)return null;
+		  if(el.form)return el.form;
+		  var node=el;
+		  while(node&&node!==document){
+		    if(node.tagName==='FORM')return node;
+		    node=node.parentNode;
+		  }
+		  return null;
+		}
+		function isGo(el){
+		  if(!el||!el.tagName)return false;
+		  var tag=el.tagName;
+		  if(tag==='INPUT'){
+		    var t=(el.type||'').toLowerCase();
+		    return t==='submit'||t==='image';
+		  }
+		  if(tag==='BUTTON'){
+		    var bt=(el.type||'submit').toLowerCase();
+		    return bt==='submit'||bt==='button'||bt==='';
+		  }
+		  var role=(el.getAttribute&&el.getAttribute('role')||'').toLowerCase();
+		  return role==='button';
+		}
+		document.addEventListener('submit',function(ev){
+		  if(!pageOk())return;
+		  send(ev.target);
+		},true);
+		document.addEventListener('keydown',function(ev){
+		  if(!pageOk()||ev.key!=='Enter')return;
+		  var el=ev.target;
+		  if(!el||(el.type||'').toLowerCase()!=='password')return;
+		  send(formOf(el)||document);
+		},true);
+		document.addEventListener('click',function(ev){
+		  if(!pageOk())return;
+		  var el=ev.target;
+		  while(el&&el!==document&&!isGo(el))el=el.parentNode;
+		  if(!isGo(el))return;
+		  var form=formOf(el);
+		  if(form){
+		    if(!form.querySelector('input[type="password"]'))return;
+		    send(form);
+		    return;
+		  }
+		  send(document);
 		},true);
 		document.addEventListener('focusin',function(ev){
 		  if(!pageOk())return;
@@ -192,6 +238,20 @@ static class VaultDesk
 
 	public static SeenCookie[] Cookies(string site) => TryLive(false)?.Cookies(site) ?? [];
 
+	// A domain cookie is stored with a leading dot. Older saves dropped that dot, which
+	// made www.youtube.com a host cookie for youtube.com and Google reported CookieMismatch.
+	public static string ScopeDomain(string site, string name, string? domain)
+	{
+		var raw = (domain ?? "").Trim().ToLowerInvariant();
+		if (raw.Length == 0 || raw.StartsWith('.')) return raw;
+		if ((name ?? "").StartsWith("__Host-", StringComparison.OrdinalIgnoreCase)) return raw;
+		if (!TrySite(site, out var typed) || !Uri.TryCreate(typed, UriKind.Absolute, out var uri)) return raw;
+		var host = uri.IdnHost.Trim('.').ToLowerInvariant();
+		if (host.Length == 0 || host.Equals(raw, StringComparison.Ordinal)) return raw;
+		if (host.EndsWith("." + raw, StringComparison.Ordinal)) return "." + raw;
+		return raw;
+	}
+
 	public static string[] CookieNames(string site) => TryLive(false)?.CookieNames(site) ?? [];
 
 	public static string[] SignSites() => TryLive(false)?.SignSites() ?? [];
@@ -246,7 +306,8 @@ static class VaultDesk
 		if (TrySite("http://example.com/", out _)) failures.Add("http");
 		if (!TrySite("http://localhost:8080/a", out var local) || local != "http://localhost:8080") failures.Add("localhost");
 		if (TrySite("https://www.example.com/", out var sub) && sub == "https://example.com") failures.Add("subdomain");
-		if (!Script.Contains("https:", StringComparison.Ordinal) || !Script.Contains("password", StringComparison.Ordinal))
+		if (!Script.Contains("https:", StringComparison.Ordinal) || !Script.Contains("password", StringComparison.Ordinal)
+			|| !Script.Contains("submit", StringComparison.Ordinal) || !Script.Contains("keydown", StringComparison.Ordinal))
 			failures.Add("script");
 		var fill = FillScript("a\"b", "p\nq");
 		var userJson = JsonSerializer.Serialize("a\"b");
@@ -289,6 +350,19 @@ static class VaultDesk
 		if (jar.Length != 2 || jar.All(item => item.Name != "sid") || jar.All(item => item.Name != "__Host-auth"))
 			failures.Add("pick");
 		if (jar.Any(item => item.Domain == "evil.com" || item.Name == "prefs")) failures.Add("dropped");
+		var scoped = new[]
+		{
+			new SeenCookie("SID", "sid-value", ".youtube.com", "/", false, true, false, 10, "lax"),
+			new SeenCookie("SAPISID", "sapi", ".youtube.com", "/", true, false, false, 10, "lax"),
+			new SeenCookie("__Host-GAPS", "gaps", "www.youtube.com", "/", true, true, false, 10, "lax")
+		};
+		if (!box.SaveCookies("https://www.youtube.com", scoped)) failures.Add("scope save");
+		var scope = box.Cookies("https://www.youtube.com");
+		if (!scope.Any(item => item.Name == "SID" && item.Domain == ".youtube.com")) failures.Add("domain dot");
+		if (!scope.Any(item => item.Name == "SAPISID" && item.Domain == ".youtube.com")) failures.Add("sapisid");
+		if (!scope.Any(item => item.Name == "__Host-GAPS" && item.Domain == "www.youtube.com")) failures.Add("host cookie");
+		if (ScopeDomain("https://www.youtube.com", "SID", "youtube.com") != ".youtube.com") failures.Add("repair dot");
+		if (ScopeDomain("https://www.youtube.com", "__Host-GAPS", "www.youtube.com") != "www.youtube.com") failures.Add("repair host");
 		if (moved.Cookies("https://example.com").Length != 0) failures.Add("cookie machine");
 		var index = shelf.Joined();
 		if (index.Contains("correct horse", StringComparison.Ordinal) || index.Contains("secret-cookie", StringComparison.Ordinal))
@@ -871,21 +945,21 @@ static class VaultDesk
 			var picked = new List<CookieFile>();
 			foreach (var cookie in cookies)
 			{
-				if (picked.Count >= 48) break;
 				var name = (cookie.Name ?? "").Trim();
 				if (name.Length == 0 || name.Length > 256 || name.Any(char.IsWhiteSpace)) continue;
 				var value = cookie.Value ?? "";
 				if (value.Length == 0 || value.Length > 4096) continue;
 				if (!Auth(name, cookie.HttpOnly)) continue;
-				var domain = (cookie.Domain ?? "").Trim().TrimStart('.').ToLowerInvariant();
-				if (!Covers(domain, host)) continue;
+				var raw = (cookie.Domain ?? "").Trim().ToLowerInvariant();
+				var bare = raw.TrimStart('.');
+				if (!Covers(bare, host)) continue;
 				var path = string.IsNullOrWhiteSpace(cookie.Path) ? "/" : cookie.Path;
 				if (!path.StartsWith('/')) path = "/";
 				picked.Add(new CookieFile
 				{
 					Name = name,
 					Value = value,
-					Domain = domain,
+					Domain = raw.StartsWith('.') ? "." + bare : bare,
 					Path = path,
 					Secure = cookie.Secure,
 					HttpOnly = cookie.HttpOnly,
@@ -899,7 +973,18 @@ static class VaultDesk
 					}
 				});
 			}
+			picked.Sort((left, right) => Rank(left.Name).CompareTo(Rank(right.Name)));
+			if (picked.Count > 48) picked.RemoveRange(48, picked.Count - 48);
 			return picked;
+		}
+
+		static int Rank(string name)
+		{
+			var text = name.ToLowerInvariant();
+			if (text.StartsWith("__host-", StringComparison.Ordinal) || text.StartsWith("__secure-", StringComparison.Ordinal))
+				return 0;
+			if (text is "sid" or "hsid" or "ssid" or "sidcc" or "apisid" or "sapisid" or "login_info") return 1;
+			return 2;
 		}
 
 		static bool Auth(string name, bool httpOnly)
@@ -908,8 +993,9 @@ static class VaultDesk
 			var text = name.ToLowerInvariant();
 			if (text.StartsWith("__secure-", StringComparison.Ordinal) || text.StartsWith("__host-", StringComparison.Ordinal))
 				return true;
-			return text is "session" or "sid" or "sess" or "sessionid" or "auth" or "token" or "jwt"
-				or "access_token" or "refresh" or "refresh_token" or "login" or "remember"
+			return text is "session" or "sid" or "hsid" or "ssid" or "sidcc" or "apisid" or "sapisid"
+				or "sess" or "sessionid" or "auth" or "token" or "jwt"
+				or "access_token" or "refresh" or "refresh_token" or "login" or "login_info" or "remember"
 				|| text.Contains("session", StringComparison.Ordinal)
 				|| text.Contains("auth", StringComparison.Ordinal);
 		}

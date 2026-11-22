@@ -216,7 +216,9 @@ public partial class SiteBrowser : UserControl
 	bool _parked;
 	bool _parking;
 	bool _vaultDismissed;
+	string _vaultDismissedSite = "";
 	string _vaultPage = "";
+	string _vaultSite = "";
 	string _vaultKind = "";
 	string _vaultUser = "";
 	string _vaultPass = "";
@@ -1275,11 +1277,21 @@ public partial class SiteBrowser : UserControl
 
 	static void DropSite(CoreWebView2 core, string site)
 	{
-		foreach (var name in VaultDesk.CookieNames(site))
-		{
-			if (name.Length == 0) continue;
-			try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
-		}
+		foreach (var cookie in VaultDesk.Cookies(site))
+			DropCookie(core.CookieManager, site, cookie.Name, cookie.Domain, cookie.Path);
+	}
+
+	// DeleteCookies(name, site) removes cookies sent to that page. A domain cookie is one of
+	// those. The older host-only copy (domain "youtube.com", no dot) is not, so it is removed
+	// by its exact domain. Deleting by the parent URL would also match the domain cookie.
+	static void DropCookie(CoreWebView2CookieManager manager, string site, string name, string? domain, string? path)
+	{
+		if (name.Length == 0) return;
+		try { manager.DeleteCookies(name, site + "/"); } catch { }
+		var scope = VaultDesk.ScopeDomain(site, name, domain);
+		if (!scope.StartsWith('.')) return;
+		var cookiePath = string.IsNullOrWhiteSpace(path) ? "/" : path;
+		try { manager.DeleteCookiesWithDomainAndPath(name, scope.TrimStart('.'), cookiePath); } catch { }
 	}
 
 	void Inject(CoreWebView2 core, string site)
@@ -1289,9 +1301,12 @@ public partial class SiteBrowser : UserControl
 		{
 			try
 			{
-				if (cookie.Name.Length == 0 || cookie.Domain.Length == 0) continue;
+				var domain = VaultDesk.ScopeDomain(site, cookie.Name, cookie.Domain);
+				if (cookie.Name.Length == 0 || domain.Length == 0) continue;
 				var path = string.IsNullOrWhiteSpace(cookie.Path) ? "/" : cookie.Path;
-				var made = manager.CreateCookie(cookie.Name, cookie.Value, cookie.Domain, path);
+				if (domain.StartsWith('.'))
+					try { manager.DeleteCookiesWithDomainAndPath(cookie.Name, domain.TrimStart('.'), path); } catch { }
+				var made = manager.CreateCookie(cookie.Name, cookie.Value, domain, path);
 				made.IsHttpOnly = cookie.HttpOnly;
 				made.IsSecure = cookie.Secure;
 				made.SameSite = cookie.SameSite switch
@@ -1372,14 +1387,18 @@ public partial class SiteBrowser : UserControl
 	{
 		var site = VaultDesk.TrySite(url, out var got) ? got : "";
 		if (site == _vaultPage) return;
+		var keep = _vaultKind is "save" or "update";
 		_vaultPage = site;
+		if (keep) return;
 		_vaultDismissed = false;
+		_vaultDismissedSite = "";
 		ClearVaultPrompt();
 	}
 
 	void ClearVaultPrompt()
 	{
 		_vaultKind = "";
+		_vaultSite = "";
 		_vaultUser = "";
 		_vaultPass = "";
 		VaultText.Text = "";
@@ -1389,25 +1408,28 @@ public partial class SiteBrowser : UserControl
 
 	void DismissVault()
 	{
+		_vaultDismissedSite = _vaultSite.Length > 0 ? _vaultSite : _vaultPage;
 		ClearVaultPrompt();
 		_vaultDismissed = true;
 	}
 
 	void NeverVault()
 	{
-		var site = _vaultPage;
+		var site = _vaultSite.Length > 0 ? _vaultSite : _vaultPage;
+		_vaultDismissedSite = site;
 		ClearVaultPrompt();
 		_vaultDismissed = true;
 		if (site.Length > 0) VaultDesk.Never(site);
 	}
 
-	void ShowVault(string kind, string user, string pass)
+	void ShowVault(string site, string kind, string user, string pass)
 	{
-		if (_vaultPage.Length == 0) return;
+		if (site.Length == 0) return;
+		_vaultSite = site;
 		_vaultKind = kind;
 		_vaultUser = kind == "fill" ? "" : user;
 		_vaultPass = kind == "fill" ? "" : pass;
-		var label = VaultDesk.Label(_vaultPage);
+		var label = VaultDesk.Label(site);
 		if (kind == "fill")
 		{
 			VaultText.Text = "Use the saved password for " + label + "?";
@@ -1431,19 +1453,21 @@ public partial class SiteBrowser : UserControl
 		{
 			if (_parked || tab != Active || !_tabs.Contains(tab)) return;
 			if (!VaultDesk.TrySite(source, out var from)) return;
-			if (!VaultDesk.TrySite(tab.PageUrl, out var page) || from != page || page != _vaultPage) return;
-			if (_vaultDismissed) return;
+			VaultDesk.TrySite(tab.PageUrl, out var page);
 			if (kind == "focus")
 			{
 				if (_vaultKind is "save" or "update") return;
+				if (from != page || page != _vaultPage) return;
+				if (_vaultDismissed && (_vaultDismissedSite.Length == 0 || _vaultDismissedSite == page)) return;
 				if (!VaultDesk.HasPassword(page)) return;
-				ShowVault("fill", "", "");
+				ShowVault(page, "fill", "", "");
 				return;
 			}
 			if (kind != "save") return;
-			var offer = VaultDesk.Offer(page, user, pass);
+			if (_vaultDismissed && _vaultDismissedSite == from) return;
+			var offer = VaultDesk.Offer(from, user, pass);
 			if (offer.Length == 0) return;
-			ShowVault(offer, user, pass);
+			ShowVault(from, offer, user, pass);
 		}
 		finally
 		{
@@ -1455,7 +1479,7 @@ public partial class SiteBrowser : UserControl
 	async Task AcceptVault()
 	{
 		var kind = _vaultKind;
-		var site = _vaultPage;
+		var site = _vaultSite.Length > 0 ? _vaultSite : _vaultPage;
 		var user = _vaultUser;
 		var pass = _vaultPass;
 		ClearVaultPrompt();
@@ -1470,6 +1494,7 @@ public partial class SiteBrowser : UserControl
 					return;
 				}
 				_vaultDismissed = true;
+				_vaultDismissedSite = site;
 				SetNote("Saved for this PC.");
 				var tab = Active;
 				if (tab != null && VaultDesk.TrySite(tab.PageUrl, out var page) && page == site)
@@ -1968,13 +1993,10 @@ public partial class SiteBrowser : UserControl
 		var core = Active?.View.CoreWebView2;
 		if (core == null || !VaultDesk.TrySite(core.Source, out var site)) return;
 		var had = VaultDesk.HasPassword(site) || VaultDesk.HasSignIn(site);
-		var names = VaultDesk.CookieNames(site);
+		var cookies = VaultDesk.Cookies(site);
 		VaultDesk.ForgetSite(site);
-		foreach (var name in names)
-		{
-			if (name.Length == 0) continue;
-			try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
-		}
+		foreach (var cookie in cookies)
+			DropCookie(core.CookieManager, site, cookie.Name, cookie.Domain, cookie.Path);
 		_liveSites.Remove(site);
 		if (_vaultPage == site) DismissVault();
 		if (had) SetNote("Sign-in for " + VaultDesk.Label(site) + " was forgotten on this PC.");
@@ -1985,19 +2007,16 @@ public partial class SiteBrowser : UserControl
 	{
 		var core = AnyCore();
 		var sites = VaultDesk.SignSites();
-		var names = new Dictionary<string, string[]>(StringComparer.Ordinal);
-		foreach (var site in sites) names[site] = VaultDesk.CookieNames(site);
-		foreach (var site in _logins) names.TryAdd(site.Site, VaultDesk.CookieNames(site.Site));
+		var jars = new Dictionary<string, VaultDesk.SeenCookie[]>(StringComparer.Ordinal);
+		foreach (var site in sites) jars[site] = VaultDesk.Cookies(site);
+		foreach (var site in _logins) jars.TryAdd(site.Site, VaultDesk.Cookies(site.Site));
 		VaultDesk.ForgetAll();
 		if (core != null)
 		{
-			foreach (var pair in names)
+			foreach (var pair in jars)
 			{
-				foreach (var name in pair.Value)
-				{
-					if (name.Length == 0) continue;
-					try { core.CookieManager.DeleteCookies(name, pair.Key + "/"); } catch { }
-				}
+				foreach (var cookie in pair.Value)
+					DropCookie(core.CookieManager, pair.Key, cookie.Name, cookie.Domain, cookie.Path);
 			}
 		}
 		_liveSites.Clear();
@@ -2180,6 +2199,42 @@ public partial class SiteBrowser : UserControl
 		if (sender is not ListBox box || box.SelectedItem is not SiteVisit visit) return;
 		GoUrl(visit.Url);
 	}
+
+	async void OnClearCookies(object sender, RoutedEventArgs e)
+	{
+		CloseMenu();
+		var core = AnyCore();
+		if (core == null)
+		{
+			SetNote("Cookies could not be cleared.");
+			return;
+		}
+		_liveSites.Clear();
+		try { core.CookieManager.DeleteAllCookies(); }
+		catch
+		{
+			SetNote("Cookies could not be cleared.");
+			return;
+		}
+		for (var i = 0; i < 20; i++)
+		{
+			IReadOnlyList<CoreWebView2Cookie> left;
+			try { left = await core.CookieManager.GetCookiesAsync(""); }
+			catch { break; }
+			if (left.Count == 0) break;
+			await Task.Delay(100);
+		}
+		foreach (var tab in _tabs.ToList())
+		{
+			var view = tab.View.CoreWebView2;
+			var url = view?.Source ?? tab.PageUrl;
+			if (view == null || !SiteDesk.IsPage(url)) continue;
+			try { view.Reload(); } catch { }
+		}
+		SetNote("Cookies were cleared. A saved sign-in is put back the next time that site opens.");
+	}
+
+	void OnOpenPasswords(object sender, RoutedEventArgs e) => OpenSettings("passwords");
 
 	void OnClearHistory(object sender, RoutedEventArgs e)
 	{
@@ -3000,29 +3055,35 @@ public partial class SiteBrowser : UserControl
 	{
 		var page = Active?.PageUrl ?? "";
 		if (page.Length == 0) page = Active?.View.CoreWebView2?.Source ?? "";
+		var signs = VaultDesk.SignSites();
+		var saved = new List<(string Site, string User, bool Secret)>();
+		foreach (var row in _logins) saved.Add((row.Site, row.User, true));
+		foreach (var signed in signs)
+			if (!saved.Any(row => row.Site == signed)) saved.Add((signed, "", false));
 		var here = "";
-		if (VaultDesk.TrySite(page, out var site) && _logins.Any(row => row.Site == site)) here = site;
+		if (VaultDesk.TrySite(page, out var site) && saved.Any(row => row.Site == site)) here = site;
 		if (_passHere && here != _passSite) _passHere = false;
-		var showFilter = here.Length > 0 && _logins.Length > 0;
+		var showFilter = here.Length > 0 && saved.Count > 0;
 		PassFilter.Visibility = showFilter ? Visibility.Visible : Visibility.Collapsed;
 		_passLock = true;
 		PassAll.IsChecked = !_passHere;
 		PassHere.IsChecked = _passHere && showFilter;
 		_passLock = false;
-		var shown = _passHere && here.Length > 0 ? _logins.Where(row => row.Site == here).ToArray() : _logins;
-		PassEmpty.Visibility = _logins.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-		PassForget.Visibility = _logins.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-		var stamp = (_passHere ? "1:" : "0:") + here + "\n" + string.Join("\n", shown.Select(row => row.Site + "\t" + row.User));
+		var shown = _passHere && here.Length > 0 ? saved.Where(row => row.Site == here).ToList() : saved;
+		PassEmpty.Visibility = saved.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+		PassForget.Visibility = saved.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+		var stamp = (_passHere ? "1:" : "0:") + here + "\n" + string.Join("\n", shown.Select(row => row.Site + "\t" + row.User + "\t" + (row.Secret ? "1" : "0")));
 		if (stamp == _passStamp) return;
 		_passStamp = stamp;
 		_passBoxes.Clear();
 		PassRows.Children.Clear();
-		foreach (var row in shown) PassRows.Children.Add(PassRow(row));
+		foreach (var row in shown) PassRows.Children.Add(PassRow(row.Site, row.User, row.Secret));
 	}
 
-	System.Windows.Controls.Border PassRow(VaultDesk.SavedLogin row)
+	System.Windows.Controls.Border PassRow(string site, string user, bool secret)
 	{
-		var revealed = _shownPasses.TryGetValue(row.Site, out var pass) && pass.Length > 0;
+		_shownPasses.TryGetValue(site, out var pass);
+		var revealed = secret && pass != null && pass.Length > 0;
 		var box = new System.Windows.Controls.TextBox
 		{
 			Text = revealed ? pass : "••••••••",
@@ -3033,41 +3094,41 @@ public partial class SiteBrowser : UserControl
 			FontFamily = new FontFamily("Consolas"),
 			Margin = new Thickness(0, 4, 0, 0)
 		};
-		_passBoxes.Add(box);
+		if (secret) _passBoxes.Add(box);
 		var toggle = new Button
 		{
 			Content = revealed ? "Hide" : "Show",
 			MinWidth = 72,
 			Margin = new Thickness(8, 0, 0, 0),
 			Padding = new Thickness(10, 4, 10, 4),
-			Tag = row.Site
+			Tag = site
 		};
-		toggle.Click += (_, _) => TogglePass(row.Site, box, toggle);
+		toggle.Click += (_, _) => TogglePass(site, box, toggle);
 		var remove = new Button
 		{
 			Content = "Remove",
 			Margin = new Thickness(8, 0, 0, 0),
 			Padding = new Thickness(10, 4, 10, 4),
-			Tag = row.Site
+			Tag = site
 		};
-		remove.Click += (_, _) => ForgetOne(row.Site);
+		remove.Click += (_, _) => ForgetOne(site);
 		var actions = new StackPanel
 		{
 			Orientation = System.Windows.Controls.Orientation.Horizontal,
 			HorizontalAlignment = HorizontalAlignment.Right
 		};
-		actions.Children.Add(toggle);
+		if (secret) actions.Children.Add(toggle);
 		actions.Children.Add(remove);
 		var names = new StackPanel();
 		names.Children.Add(new TextBlock
 		{
-			Text = VaultDesk.Label(row.Site),
+			Text = VaultDesk.Label(site),
 			FontWeight = FontWeights.SemiBold,
 			Foreground = Ink
 		});
 		names.Children.Add(new TextBlock
 		{
-			Text = row.User.Length == 0 ? "No username" : row.User,
+			Text = !secret ? "Sign-in saved" : user.Length == 0 ? "No username" : user,
 			Foreground = Muted,
 			Margin = new Thickness(0, 2, 0, 0)
 		});
@@ -3077,7 +3138,7 @@ public partial class SiteBrowser : UserControl
 		head.Children.Add(names);
 		var stack = new StackPanel();
 		stack.Children.Add(head);
-		stack.Children.Add(box);
+		if (secret) stack.Children.Add(box);
 		return new System.Windows.Controls.Border
 		{
 			BorderBrush = LineBrush,
@@ -3110,15 +3171,12 @@ public partial class SiteBrowser : UserControl
 	void ForgetOne(string site)
 	{
 		var core = AnyCore();
-		var names = VaultDesk.CookieNames(site);
+		var cookies = VaultDesk.Cookies(site);
 		VaultDesk.ForgetSite(site);
 		if (core != null)
 		{
-			foreach (var name in names)
-			{
-				if (name.Length == 0) continue;
-				try { core.CookieManager.DeleteCookies(name, site + "/"); } catch { }
-			}
+			foreach (var cookie in cookies)
+				DropCookie(core.CookieManager, site, cookie.Name, cookie.Domain, cookie.Path);
 		}
 		_liveSites.Remove(site);
 		if (_shownPasses.TryGetValue(site, out var shown))

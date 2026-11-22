@@ -543,6 +543,10 @@
                 <Button Content="Clear history" Click="OnClearHistory"/>
                 <Button Content="Clear bookmarks" Margin="8,0,0,0" Click="OnClearBookmarks"/>
               </StackPanel>
+              <TextBlock Text="Cookies" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
+                         Text="Clears cookies kept in this browser. A saved sign-in is put back the next time that site opens. Forget that sign-in under Passwords to remove it."/>
+              <Button Content="Clear cookies" HorizontalAlignment="Left" Margin="0,0,0,16" Click="OnClearCookies"/>
               <TextBlock Text="Calls" FontSize="16" FontWeight="SemiBold"/>
               <TextBlock Margin="0,4,0,8" Foreground="#8EA088" TextWrapping="Wrap"
                          Text="Calls from the open tab are listed. The list does not block them."/>
@@ -556,9 +560,9 @@
                 <RadioButton x:Name="PassAll" Content="All" GroupName="PassView" Checked="OnPassFilter"/>
                 <RadioButton x:Name="PassHere" Content="Current page" GroupName="PassView" Checked="OnPassFilter"/>
               </StackPanel>
-              <TextBlock x:Name="PassEmpty" Text="No saved passwords." Margin="0,0,0,8" Visibility="Collapsed"/>
+              <TextBlock x:Name="PassEmpty" Text="No saved passwords or sign-ins." Margin="0,0,0,8" Visibility="Collapsed"/>
               <StackPanel x:Name="PassRows"/>
-              <Button x:Name="PassForget" Content="Forget saved sign-ins" HorizontalAlignment="Left" Margin="0,8,0,8" Visibility="Collapsed" Click="OnForgetSignIns"/>
+              <Button x:Name="PassForget" Content="Forget saved passwords and sign-ins" HorizontalAlignment="Left" Margin="0,8,0,8" Visibility="Collapsed" Click="OnForgetSignIns"/>
               <Button Content="Import" HorizontalAlignment="Left" Margin="0,8,0,0" Click="OnImportPasswords"/>
               <TextBlock x:Name="PassImportNote" Foreground="#8EA088" TextWrapping="Wrap" Margin="0,8,0,0"/>
             </StackPanel>
@@ -589,6 +593,8 @@
           </DockPanel>
           <Border Height="1" Background="#2C3828" Margin="8,4"/>
           <Button Style="{StaticResource MenuItem}" Content="Calls" Click="OnCallsToggle"/>
+          <Button Style="{StaticResource MenuItem}" Content="Passwords" Click="OnOpenPasswords"/>
+          <Button Style="{StaticResource MenuItem}" Content="Clear cookies" Click="OnClearCookies"/>
           <Button Style="{StaticResource MenuItem}" Content="Protect this sign-in" Click="OnProtectSignIn"/>
           <Button Style="{StaticResource MenuItem}" Content="Forget this sign-in" Click="OnForgetSignIn"/>
           <Button Style="{StaticResource MenuItem}" Content="Settings" Click="OnOpenSettings"/>
