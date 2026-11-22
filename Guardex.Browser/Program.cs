@@ -26,7 +26,8 @@ static class Program
 				Guardex.Favicon.SelfCheck(),
 				HomeDesk.SelfCheck(),
 				StartDesk.SelfCheck(),
-				VaultDesk.SelfCheck()
+				VaultDesk.SelfCheck(),
+				FullGuard.SelfCheck()
 			};
 			if (parts.All(part => part == "PASS"))
 			{
@@ -66,7 +67,7 @@ static class Program
 			while (show.WaitOne())
 			{
 				if (app.Dispatcher.HasShutdownStarted) return;
-				app.Dispatcher.BeginInvoke(window.ShowFromTray);
+				app.Dispatcher.BeginInvoke(window.BringForward);
 			}
 		})
 		{ IsBackground = true, Name = "gx-show" };

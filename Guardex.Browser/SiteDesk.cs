@@ -194,6 +194,7 @@ static class SiteDesk
 		return items;
 	}
 
+	// Launch does not read this. ForgetPages deletes site-session.txt.
 	public static string WriteSession(IEnumerable<string> urls)
 	{
 		var kept = new List<string>();
@@ -217,6 +218,32 @@ static class SiteDesk
 			if (urls.Count >= SessionMax) break;
 		}
 		return urls;
+	}
+
+	public static void ForgetPages(string root)
+	{
+		if (string.IsNullOrWhiteSpace(root)) return;
+		TryDeleteFile(Path.Combine(root, "site-session.txt"));
+		var view = Path.Combine(root, "site-view");
+		foreach (var profile in new[] { view, Path.Combine(view, "EBWebView") })
+		{
+			var home = Path.Combine(profile, "Default");
+			foreach (var name in new[] { "Current Session", "Current Tabs", "Last Session", "Last Tabs" })
+				TryDeleteFile(Path.Combine(home, name));
+			TryDeleteDirectory(Path.Combine(home, "Sessions"));
+		}
+	}
+
+	static void TryDeleteFile(string path)
+	{
+		try { if (File.Exists(path)) File.Delete(path); }
+		catch { }
+	}
+
+	static void TryDeleteDirectory(string path)
+	{
+		try { if (Directory.Exists(path)) Directory.Delete(path, true); }
+		catch { }
 	}
 
 	public static string DownloadPath(string directory, string? suggested, Func<string, bool> exists)
@@ -389,6 +416,41 @@ static class SiteDesk
 			failures.Add("marks " + restored.Count);
 		if (new SiteVisit { Url = "not a url" }.Mark != "N") failures.Add("mark text");
 		if (new SiteVisit { Url = "https://en.wikipedia.org/" }.Mark != "E") failures.Add("mark host");
+
+		var root = Path.Combine(Path.GetTempPath(), "guardex-forget-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			var home = Path.Combine(root, "site-view", "EBWebView", "Default");
+			var sessions = Path.Combine(home, "Sessions");
+			Directory.CreateDirectory(sessions);
+			File.WriteAllText(Path.Combine(sessions, "Session_1"), "https://evil.example/");
+			File.WriteAllText(Path.Combine(home, "Last Session"), "x");
+			File.WriteAllText(Path.Combine(home, "Last Tabs"), "x");
+			File.WriteAllText(Path.Combine(home, "Current Session"), "x");
+			File.WriteAllText(Path.Combine(home, "Current Tabs"), "x");
+			File.WriteAllText(Path.Combine(root, "site-session.txt"), "https://evil.example/");
+			var cookies = Path.Combine(home, "Network");
+			Directory.CreateDirectory(cookies);
+			File.WriteAllText(Path.Combine(cookies, "Cookies"), "keep");
+			File.WriteAllText(Path.Combine(home, "Preferences"), "keep");
+			ForgetPages(root);
+			ForgetPages(Path.Combine(root, "missing"));
+			if (File.Exists(Path.Combine(root, "site-session.txt"))) failures.Add("session file");
+			if (Directory.Exists(sessions)) failures.Add("sessions dir");
+			if (File.Exists(Path.Combine(home, "Last Session")) || File.Exists(Path.Combine(home, "Current Tabs")))
+				failures.Add("tab files");
+			if (File.ReadAllText(Path.Combine(cookies, "Cookies")) != "keep") failures.Add("cookies");
+			if (File.ReadAllText(Path.Combine(home, "Preferences")) != "keep") failures.Add("prefs");
+		}
+		catch (Exception ex)
+		{
+			failures.Add("forget " + ex.GetType().Name);
+		}
+		finally
+		{
+			try { if (Directory.Exists(root)) Directory.Delete(root, true); }
+			catch { }
+		}
 
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}

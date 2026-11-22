@@ -1,30 +1,35 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Forms;
+using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
+using Button = System.Windows.Controls.Button;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
+using Cursors = System.Windows.Input.Cursors;
+using FontFamily = System.Windows.Media.FontFamily;
+using Key = System.Windows.Input.Key;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using Orientation = System.Windows.Controls.Orientation;
+using Point = System.Windows.Point;
 using Guardex.Tunnel;
 
 namespace Guardex.Browser;
 
 public partial class BrowserWindow : Window
 {
-	readonly NotifyIcon _icon;
 	readonly bool _startArmed;
 	readonly bool _loaded;
 	readonly string _bootError;
 	bool _armed;
 	bool _busy;
-	bool _allowClose;
-	bool _iconTunnel;
-	bool _iconArmed;
 	bool _cover;
 	bool _raisedForPage;
-	WindowState _stateBeforePage;
 	string _notice = "";
 	DateTime _noticeUntil;
-	Icon? _currentIcon;
+	Window? _fullChip;
 
 	public BrowserWindow(bool armed, bool loaded, string error)
 	{
@@ -33,15 +38,6 @@ public partial class BrowserWindow : Window
 		_loaded = loaded;
 		_bootError = error ?? "";
 		InitializeComponent();
-		_icon = new NotifyIcon { Visible = true, Text = "GUARDEX Browser" };
-		var menu = new ContextMenuStrip();
-		menu.Items.Add("Open", null, (_, _) => ShowFromTray());
-		menu.Items.Add("Exit", null, (_, _) => Exit());
-		_icon.ContextMenuStrip = menu;
-		_icon.MouseClick += (_, e) =>
-		{
-			if (e.Button == MouseButtons.Left) ShowFromTray();
-		};
 		SourceInitialized += (_, _) =>
 		{
 			var source = (HwndSource?)PresentationSource.FromVisual(this);
@@ -54,18 +50,37 @@ public partial class BrowserWindow : Window
 		Pages.CloseRequested += Close;
 		Pages.TunnelToggleRequested += OnVpn;
 		Pages.TunnelImportRequested += OnImport;
-		StateChanged += (_, _) => Pages.SetRestore(WindowState == WindowState.Maximized);
+		StateChanged += (_, _) =>
+		{
+			Pages.SetRestore(WindowState == WindowState.Maximized);
+			SyncChip();
+		};
+		LocationChanged += (_, _) => PlaceFullChip();
+		SizeChanged += (_, _) => PlaceFullChip();
+		Activated += (_, _) =>
+		{
+			if (_cover && _fullChip != null) _fullChip.Topmost = true;
+		};
+		Deactivated += (_, _) => Dispatcher.BeginInvoke(() =>
+		{
+			if (_fullChip == null || IsActive || _fullChip.IsActive) return;
+			_fullChip.Topmost = false;
+		});
 		Loaded += (_, _) => Boot();
 		Paint();
 	}
 
-	public void ShowFromTray()
+	public void BringForward()
 	{
-		var hidden = !IsVisible;
-		Show();
-		WindowState = WindowState.Normal;
-		Activate();
-		if (hidden) Pages.ResumeSignIns();
+		try
+		{
+			if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+			Show();
+			Activate();
+		}
+		catch (InvalidOperationException)
+		{
+		}
 	}
 
 	void Boot()
@@ -224,25 +239,6 @@ public partial class BrowserWindow : Window
 		else
 			status = "Tunnel off.";
 		Pages.ApplyTunnel(status, _armed ? "Turn off" : "Turn on", !_busy);
-
-		var tunnel = VpnHub.TunnelOn;
-		if (_currentIcon == null || tunnel != _iconTunnel || _armed != _iconArmed)
-		{
-			var next = TrayMark.Make(tunnel, _armed);
-			var prev = _currentIcon;
-			_icon.Icon = next;
-			_currentIcon = next;
-			prev?.Dispose();
-			_iconTunnel = tunnel;
-			_iconArmed = _armed;
-		}
-		_icon.Text = tunnel ? "GUARDEX Browser tunnel on" : _armed ? "GUARDEX Browser pages stopped" : "GUARDEX Browser";
-	}
-
-	void Exit()
-	{
-		_allowClose = true;
-		Close();
 	}
 
 	void OnPageFull(bool full)
@@ -250,12 +246,13 @@ public partial class BrowserWindow : Window
 		_cover = full;
 		if (full)
 		{
-			_stateBeforePage = WindowState;
 			_raisedForPage = WindowState != WindowState.Maximized;
 			if (_raisedForPage) WindowState = WindowState.Maximized;
 			else NudgeMax();
+			SyncChip();
 			return;
 		}
+		HideFullChip();
 		if (_raisedForPage)
 		{
 			_raisedForPage = false;
@@ -270,6 +267,106 @@ public partial class BrowserWindow : Window
 		if (WindowState != WindowState.Maximized) return;
 		WindowState = WindowState.Normal;
 		WindowState = WindowState.Maximized;
+	}
+
+	void SyncChip()
+	{
+		if (!_cover || WindowState == WindowState.Minimized)
+		{
+			HideFullChip();
+			return;
+		}
+		ShowFullChip();
+	}
+
+	void ShowFullChip()
+	{
+		if (_fullChip == null)
+		{
+			var label = new TextBlock
+			{
+				Text = "GUARDEX",
+				Foreground = new SolidColorBrush(Color.FromRgb(0x8F, 0xB5, 0x73)),
+				FontFamily = new FontFamily("Segoe UI"),
+				FontSize = 13,
+				FontWeight = FontWeights.SemiBold,
+				VerticalAlignment = VerticalAlignment.Center
+			};
+			var exit = new Button
+			{
+				Content = "Exit full screen",
+				Margin = new Thickness(12, 0, 0, 0),
+				Padding = new Thickness(10, 4, 10, 4),
+				Background = new SolidColorBrush(Color.FromRgb(0x27, 0x32, 0x22)),
+				Foreground = new SolidColorBrush(Color.FromRgb(0xE4, 0xEC, 0xDF)),
+				BorderBrush = new SolidColorBrush(Color.FromRgb(0x8F, 0xB5, 0x73)),
+				BorderThickness = new Thickness(1),
+				FontFamily = new FontFamily("Segoe UI"),
+				FontSize = 13,
+				Cursor = Cursors.Hand
+			};
+			exit.Click += (_, _) => Pages.EndFullScreen();
+			var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+			row.Children.Add(label);
+			row.Children.Add(exit);
+			_fullChip = new Window
+			{
+				Owner = this,
+				Title = "Exit full screen",
+				WindowStyle = WindowStyle.None,
+				ResizeMode = ResizeMode.NoResize,
+				ShowInTaskbar = false,
+				ShowActivated = false,
+				AllowsTransparency = true,
+				Background = Brushes.Transparent,
+				SizeToContent = SizeToContent.WidthAndHeight,
+				Content = new Border
+				{
+					Background = new SolidColorBrush(Color.FromRgb(0x1B, 0x21, 0x19)),
+					BorderBrush = new SolidColorBrush(Color.FromRgb(0x8F, 0xB5, 0x73)),
+					BorderThickness = new Thickness(1),
+					CornerRadius = new CornerRadius(8),
+					Padding = new Thickness(12, 8, 12, 8),
+					Child = row
+				}
+			};
+			_fullChip.PreviewKeyDown += (_, e) =>
+			{
+				if (e.Key != Key.Escape) return;
+				Pages.EndFullScreen();
+				e.Handled = true;
+			};
+		}
+		_fullChip.Topmost = true;
+		PlaceFullChip();
+		try
+		{
+			if (!_fullChip.IsVisible) _fullChip.Show();
+		}
+		catch (InvalidOperationException)
+		{
+		}
+		PlaceFullChip();
+	}
+
+	void HideFullChip()
+	{
+		if (_fullChip == null || !_fullChip.IsVisible) return;
+		_fullChip.Topmost = false;
+		_fullChip.Hide();
+	}
+
+	void PlaceFullChip()
+	{
+		if (_fullChip == null || !_fullChip.IsVisible) return;
+		var source = PresentationSource.FromVisual(this);
+		var scale = source?.CompositionTarget?.TransformToDevice.M11 ?? 1;
+		if (scale <= 0) scale = 1;
+		_fullChip.UpdateLayout();
+		var width = _fullChip.ActualWidth > 0 ? _fullChip.ActualWidth : 220;
+		var origin = PointToScreen(new Point(0, 0));
+		_fullChip.Left = origin.X / scale + Math.Max(0, (ActualWidth - width) / 2);
+		_fullChip.Top = origin.Y / scale + 12;
 	}
 
 	// A page fullscreen covers the monitor. A normal maximize stays in the work area.
@@ -335,15 +432,7 @@ public partial class BrowserWindow : Window
 
 	void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
 	{
+		HideFullChip();
 		Pages.ParkSignIns();
-		if (_allowClose)
-		{
-			_icon.Visible = false;
-			_currentIcon?.Dispose();
-			_icon.Dispose();
-			return;
-		}
-		e.Cancel = true;
-		Hide();
 	}
 }

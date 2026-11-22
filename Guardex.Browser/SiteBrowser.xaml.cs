@@ -52,6 +52,9 @@ public sealed class SiteTab : INotifyPropertyChanged
 	public ulong ResumeId { get; set; }
 	public int ResumeToken { get; set; }
 	public ulong LoadId { get; set; }
+	public bool DropStartHistory { get; set; }
+	public bool FullHonored { get; set; }
+	public bool FullLeaveSent { get; set; }
 
 	public string Title
 	{
@@ -194,6 +197,8 @@ public partial class SiteBrowser : UserControl
 	SiteTab? _findTab;
 	Task _adQueue = Task.CompletedTask;
 	bool _pageFull;
+	DateTime _fullLeftUtc;
+	DateTime _fullQuietUntil;
 	bool _bookBar = true;
 	bool _adModeLock;
 	bool _startLock;
@@ -375,12 +380,21 @@ public partial class SiteBrowser : UserControl
 		{
 			await EnsureEnv();
 			await view.EnsureCoreWebView2Async(_env);
-			Wire(tab);
-			if (SiteDesk.IsPage(url))
+			await Wire(tab);
+			var opened = view.CoreWebView2;
+			if (opened != null && SiteDesk.IsPage(url))
 			{
-				RestoreSignIn(view.CoreWebView2, url!);
-				view.CoreWebView2.Navigate(url!);
+				tab.DropStartHistory = true;
+				RestoreSignIn(opened, url!);
+				opened.Navigate(url!);
 			}
+			else if (opened != null && ForeignStart(opened.Source))
+			{
+				tab.DropStartHistory = true;
+				opened.Navigate("about:blank");
+			}
+			else if (opened != null)
+				_ = ResetHistory(opened);
 			if (select) PaintChrome();
 			if (select && _findOpen) _ = RunFind(false);
 			if (focusAddress) _ = Dispatcher.BeginInvoke(() => { Address.Focus(); Address.SelectAll(); });
@@ -392,7 +406,6 @@ public partial class SiteBrowser : UserControl
 				? "The Edge WebView2 runtime is not installed, so this pane cannot open pages."
 				: ex.Message);
 		}
-		SaveSession();
 		return tab;
 	}
 
@@ -401,6 +414,7 @@ public partial class SiteBrowser : UserControl
 		if (_env != null) return;
 		var folder = Path.Combine(Root, "site-view");
 		Directory.CreateDirectory(folder);
+		SiteDesk.ForgetPages(Root);
 		if (_proxyPort <= 0) throw new InvalidOperationException("The local proxy is not running.");
 		var options = new CoreWebView2EnvironmentOptions(Guardex.Browser.SocksGate.BrowserArguments(_proxyPort))
 		{
@@ -411,7 +425,7 @@ public partial class SiteBrowser : UserControl
 		_env = await CoreWebView2Environment.CreateAsync(null, folder, options);
 	}
 
-	void Wire(SiteTab tab)
+	async Task Wire(SiteTab tab)
 	{
 		var view = tab.View;
 		var core = view.CoreWebView2;
@@ -428,7 +442,8 @@ public partial class SiteBrowser : UserControl
 			if (e.PermissionKind is CoreWebView2PermissionKind.Camera
 				or CoreWebView2PermissionKind.Microphone
 				or CoreWebView2PermissionKind.Geolocation
-				or CoreWebView2PermissionKind.Notifications)
+				or CoreWebView2PermissionKind.Notifications
+				or CoreWebView2PermissionKind.WindowManagement)
 				e.State = CoreWebView2PermissionState.Deny;
 		};
 		core.LaunchingExternalUriScheme += (_, schemeArgs) =>
@@ -504,9 +519,13 @@ public partial class SiteBrowser : UserControl
 			if (args.IsSuccess)
 			{
 				NoteVisit(tab);
-				SaveSession();
 				PaintStyle(tab);
 				if (tab == Active) SetNote("");
+				if (tab.DropStartHistory)
+				{
+					tab.DropStartHistory = false;
+					_ = ResetHistory(core);
+				}
 			}
 			else if (tab == Active && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
 				SetNote("The page did not finish loading.");
@@ -529,7 +548,6 @@ public partial class SiteBrowser : UserControl
 			var source = message.Source;
 			Dispatcher.BeginInvoke(() => OnVaultMessage(tab, source, kind, user, pass));
 		};
-		_ = core.AddScriptToExecuteOnDocumentCreatedAsync(VaultDesk.Script);
 		core.SourceChanged += (_, _) =>
 		{
 			if (tab == Active && SiteDesk.IsPage(core.Source)) _keptAddress = null;
@@ -539,7 +557,6 @@ public partial class SiteBrowser : UserControl
 				NoteVaultPage(tab.PageUrl);
 				PaintChrome();
 			}
-			SaveSession();
 		};
 		core.DocumentTitleChanged += (_, _) =>
 		{
@@ -549,7 +566,11 @@ public partial class SiteBrowser : UserControl
 		};
 		core.HistoryChanged += (_, _) => { if (tab == Active) PaintChrome(); };
 		core.StatusBarTextChanged += (_, _) => { if (tab == Active) SetHover(core.StatusBarText ?? ""); };
-		core.ContainsFullScreenElementChanged += (_, _) => { if (tab == Active) PaintChrome(); };
+		core.ContainsFullScreenElementChanged += (_, _) =>
+		{
+			NoteFullAttempt(tab, core.ContainsFullScreenElement);
+			if (tab == Active) PaintChrome();
+		};
 		core.FaviconChanged += (_, _) => _ = StoreIcon(core);
 		view.GotFocus += (_, _) =>
 		{
@@ -579,6 +600,8 @@ public partial class SiteBrowser : UserControl
 		view.ZoomFactorChanged += (_, _) => { if (tab == Active) PaintZoom(); };
 		core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
 		core.WebResourceRequested += (_, args) => OnResource(tab, args);
+		await core.AddScriptToExecuteOnDocumentCreatedAsync(VaultDesk.Script);
+		await core.AddScriptToExecuteOnDocumentCreatedAsync(FullGuard.Script);
 		QueueAds();
 		_ = WatchCalls(tab, core);
 	}
@@ -842,7 +865,6 @@ public partial class SiteBrowser : UserControl
 		try { tab.View.Dispose(); } catch { }
 		if (_tabs.Count == 0) OpenTab(true);
 		else Select(_tabs[Math.Min(Math.Max(index, 0), _tabs.Count - 1)]);
-		SaveSession();
 	}
 
 	void Go()
@@ -943,11 +965,76 @@ public partial class SiteBrowser : UserControl
 		return "New tab";
 	}
 
+	public void EndFullScreen()
+	{
+		var tab = Active;
+		if (tab != null) tab.FullHonored = false;
+		_fullLeftUtc = DateTime.UtcNow;
+		if (tab?.View.CoreWebView2?.ContainsFullScreenElement == true) LeaveFull(tab);
+		PaintChrome();
+	}
+
+	void NoteFullAttempt(SiteTab tab, bool on)
+	{
+		if (!on)
+		{
+			tab.FullHonored = false;
+			_fullLeftUtc = DateTime.UtcNow;
+			return;
+		}
+		var now = DateTime.UtcNow;
+		var rapid = _fullLeftUtc != DateTime.MinValue && (now - _fullLeftUtc).TotalMilliseconds < FullGuard.RapidMs;
+		if (rapid || now < _fullQuietUntil)
+		{
+			tab.FullHonored = false;
+			_fullQuietUntil = now.AddSeconds(FullGuard.PauseSeconds);
+			SetNote("Full screen is paused. This page tried to take the screen back.");
+			LeaveFull(tab);
+			return;
+		}
+		tab.FullHonored = true;
+		tab.FullLeaveSent = false;
+	}
+
+	static void LeaveFull(SiteTab tab)
+	{
+		var core = tab.View.CoreWebView2;
+		if (core == null) return;
+		tab.FullLeaveSent = true;
+		try { _ = core.ExecuteScriptAsync(FullGuard.Leave); }
+		catch { }
+	}
+
+	static bool ForeignStart(string? source)
+	{
+		if (string.IsNullOrWhiteSpace(source)) return false;
+		return !source.StartsWith("about:", StringComparison.OrdinalIgnoreCase);
+	}
+
+	static async Task ResetHistory(CoreWebView2 core)
+	{
+		try
+		{
+			await core.CallDevToolsProtocolMethodAsync("Page.enable", "{}");
+			await core.CallDevToolsProtocolMethodAsync("Page.resetNavigationHistory", "{}");
+		}
+		catch
+		{
+		}
+	}
+
 	void PaintChrome()
 	{
 		var tab = Active;
 		var core = tab?.View.CoreWebView2;
-		var full = core?.ContainsFullScreenElement == true;
+		var reported = core?.ContainsFullScreenElement == true;
+		if (tab != null && !reported) tab.FullLeaveSent = false;
+		var full = reported && tab?.FullHonored == true;
+		if (tab != null && reported && !full && !tab.FullLeaveSent)
+		{
+			tab.FullLeaveSent = true;
+			LeaveFull(tab);
+		}
 		if (full != _pageFull)
 		{
 			_pageFull = full;
@@ -1160,7 +1247,12 @@ public partial class SiteBrowser : UserControl
 		{
 			await view.EnsureCoreWebView2Async(_env);
 			var core = view.CoreWebView2;
-			foreach (var site in VaultDesk.SignSites()) DropSite(core, site);
+			if (core != null && ForeignStart(core.Source))
+			{
+				try { core.Navigate("about:blank"); } catch { }
+			}
+			if (core != null)
+				foreach (var site in VaultDesk.SignSites()) DropSite(core, site);
 			_liveSites.Clear();
 		}
 		finally
@@ -1572,12 +1664,6 @@ public partial class SiteBrowser : UserControl
 	void SaveHistory() => WriteFile(HistoryFile, SiteDesk.WriteVisits(_history));
 	void SaveBookmarks() => WriteFile(BookmarkFile, SiteDesk.WriteMarks(_bookmarks));
 
-	void SaveSession()
-	{
-		var urls = _tabs.Select(tab => tab.View.CoreWebView2?.Source ?? "").Where(SiteDesk.IsPage);
-		WriteFile(SessionFile, SiteDesk.WriteSession(urls));
-	}
-
 	static string ReadFile(string path)
 	{
 		try { return File.Exists(path) ? File.ReadAllText(path) : ""; }
@@ -1600,7 +1686,6 @@ public partial class SiteBrowser : UserControl
 	string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Guardex");
 	string HistoryFile => Path.Combine(Root, "site-history.txt");
 	string BookmarkFile => Path.Combine(Root, "site-bookmarks.txt");
-	string SessionFile => Path.Combine(Root, "site-session.txt");
 	SiteTab? Active => _tabs.FirstOrDefault(tab => tab.Selected);
 
 	protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -1616,7 +1701,12 @@ public partial class SiteBrowser : UserControl
 			return;
 		}
 		var handled = false;
-		if (key == Key.Escape && _menuOpen)
+		if (key == Key.Escape && _pageFull)
+		{
+			EndFullScreen();
+			handled = true;
+		}
+		else if (key == Key.Escape && _menuOpen)
 		{
 			CloseMenu();
 			handled = true;

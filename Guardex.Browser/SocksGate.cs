@@ -47,7 +47,7 @@ public static class SocksGate
 			+ " --disable-background-networking"
 			+ " --disable-component-update"
 			+ " --disable-domain-reliability"
-			+ " --disable-features=DnsOverHttps,AsyncDns"
+			+ " --disable-features=DnsOverHttps,AsyncDns,KeyboardLockAPI"
 			+ " --disable-breakpad"
 			+ " --disable-crash-reporter"
 			+ " --no-pings";
@@ -96,6 +96,7 @@ public static class SocksGate
 			if (!args.Contains("disable_non_proxied_udp", StringComparison.Ordinal)) return "webrtc";
 			if (!args.Contains("--disable-breakpad", StringComparison.Ordinal)) return "breakpad";
 			if (!args.Contains("--disable-crash-reporter", StringComparison.Ordinal)) return "crash-reporter";
+			if (!args.Contains("KeyboardLockAPI", StringComparison.Ordinal)) return "keyboard-lock";
 			if (args.Contains("bypass", StringComparison.OrdinalIgnoreCase)) return "bypass";
 			return "PASS";
 		}
