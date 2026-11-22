@@ -9,6 +9,7 @@ namespace Guardex;
 sealed class Enforcer
 {
 	public const string RuleGroup = "GUARDEX";
+	public const string OutboundKey = "all outbound";
 	const string Prefix = "GUARDEX ";
 	readonly SessionStore _store;
 	readonly object _gate = new();
@@ -16,6 +17,7 @@ sealed class Enforcer
 	readonly Dictionary<string, (int Count, DateTime UntilUtc)> _strikes = new(StringComparer.Ordinal);
 	readonly bool _admin;
 	bool _want;
+	int _cutting;
 	CancellationTokenSource? _cts;
 
 	public Enforcer(SessionStore store)
@@ -65,11 +67,65 @@ sealed class Enforcer
 	{
 		lock (_gate) _want = on;
 		if (!on) RemoveApplied();
-		else ApplyAll();
+		else
+		{
+			ApplyAll();
+			StartCutter();
+		}
 		Publish();
 	}
 
 	public void Release(string src) => Lift(src, "Released from the window.", false);
+
+	public void EndLockdown() => Lift(OutboundKey, "Lockdown ended.", false);
+
+	public bool HasOutboundHold
+	{
+		get
+		{
+			lock (_gate)
+				return _holds.TryGetValue(OutboundKey, out var hold) && hold.UntilUtc > DateTime.UtcNow;
+		}
+	}
+
+	public string HaltOutbound(string why)
+	{
+		var now = DateTime.UtcNow;
+		var fresh = false;
+		var apply = false;
+		lock (_gate)
+		{
+			_holds.TryGetValue(OutboundKey, out var existing);
+			fresh = existing == null || existing.UntilUtc <= now;
+			var hold = existing ?? new Hold { Ip = OutboundKey, Origin = "Reflex" };
+			hold.Scenario = "clipboard";
+			hold.Why = why;
+			hold.Strikes = 4;
+			hold.Hard = true;
+			hold.UntilUtc = now.AddMinutes(OutboundHoldMinutes());
+			if (hold.Note.Length == 0 || fresh)
+				hold.Note = !_want ? "Blocking is off. Reported only." : !_admin ? "Needs elevation to change the firewall." : "";
+			_holds[OutboundKey] = hold;
+			apply = _want && _admin && (fresh || !hold.Applied);
+		}
+		if (apply) EnsureOutboundRule();
+		var applied = false;
+		lock (_gate)
+			applied = _holds.TryGetValue(OutboundKey, out var held) && held.Applied && held.UntilUtc > DateTime.UtcNow;
+		if (_want && _admin)
+		{
+			try { TcpTable.CutOutbound(); } catch { }
+			StartCutter();
+		}
+		Publish();
+		return OutboundPhrase(_want, _admin, applied);
+	}
+
+	bool OutboundRuleMissing()
+	{
+		lock (_gate)
+			return _holds.TryGetValue(OutboundKey, out var hold) && !hold.Applied && hold.UntilUtc > DateTime.UtcNow;
+	}
 
 	public void OnVerdict(Verdict verdict, bool fromModel)
 	{
@@ -128,7 +184,7 @@ sealed class Enforcer
 		{
 			try
 			{
-				Add(RuleName(ip), ip, scenario);
+				ApplyRule(ip, scenario);
 				lock (_gate)
 				{
 					if (_holds.TryGetValue(ip, out var hold))
@@ -177,7 +233,7 @@ sealed class Enforcer
 		{
 			try
 			{
-				Add(RuleName(hold.Ip), hold.Ip, hold.Scenario);
+				ApplyRule(hold.Ip, hold.Scenario);
 				lock (_gate)
 				{
 					hold.Applied = true;
@@ -256,6 +312,76 @@ sealed class Enforcer
 		_ => 720
 	};
 
+	public static int OutboundHoldMinutes() => 12 * 60;
+
+	public static string OutboundPhrase(bool want, bool admin, bool applied)
+	{
+		if (!want) return "Blocking is off, so traffic was not stopped.";
+		if (!admin) return "GUARDEX needs elevation, so traffic was not stopped.";
+		if (!applied) return "The firewall did not take the stop.";
+		return "Outbound traffic is stopped. Release the stop on the Blocks page when this PC is clean.";
+	}
+
+	bool WantCut()
+	{
+		lock (_gate)
+			return _want && _admin && _holds.TryGetValue(OutboundKey, out var hold) && hold.UntilUtc > DateTime.UtcNow;
+	}
+
+	void StartCutter()
+	{
+		if (!WantCut()) return;
+		if (Interlocked.CompareExchange(ref _cutting, 1, 0) != 0) return;
+		var token = _cts?.Token ?? CancellationToken.None;
+		Task.Run(() =>
+		{
+			try
+			{
+				while (!token.IsCancellationRequested && WantCut())
+				{
+					if (OutboundRuleMissing())
+					{
+						try { EnsureOutboundRule(); } catch { }
+					}
+					try { TcpTable.CutOutbound(); } catch { }
+					if (token.WaitHandle.WaitOne(400)) break;
+				}
+			}
+			finally { Interlocked.Exchange(ref _cutting, 0); }
+		}, token);
+	}
+
+	void EnsureOutboundRule()
+	{
+		if (!WantCut()) return;
+		try
+		{
+			ApplyRule(OutboundKey, "clipboard");
+			var keep = false;
+			lock (_gate)
+			{
+				if (_want && _admin && _holds.TryGetValue(OutboundKey, out var hold) && hold.UntilUtc > DateTime.UtcNow)
+				{
+					hold.Applied = true;
+					hold.Note = "Firewall rule is in.";
+					keep = true;
+				}
+			}
+			if (!keep)
+			{
+				try { Remove(RuleName(OutboundKey)); } catch { }
+			}
+		}
+		catch (Exception ex)
+		{
+			lock (_gate)
+			{
+				if (_holds.TryGetValue(OutboundKey, out var hold))
+					hold.Note = Clip(ex.Message);
+			}
+		}
+	}
+
 	static string Scenario(Verdict verdict)
 	{
 		var top = verdict.Signals.OrderByDescending(s => s.Weight).ThenBy(s => s.Name).FirstOrDefault();
@@ -265,6 +391,12 @@ sealed class Enforcer
 	static string RuleName(string ip) => Prefix + ip.Replace(':', '.');
 
 	static string Clip(string text) => text.Length <= 140 ? text : text[..140];
+
+	static void ApplyRule(string ip, string scenario)
+	{
+		if (ip == OutboundKey) AddOutbound(RuleName(ip));
+		else Add(RuleName(ip), ip, scenario);
+	}
 
 	static void Add(string name, string ip, string scenario)
 	{
@@ -280,6 +412,25 @@ sealed class Enforcer
 		rule.Enabled = true;
 		rule.InterfaceTypes = "All";
 		rule.RemoteAddresses = ip;
+		rule.Protocol = 256;
+		rule.Profiles = 0x7FFFFFFF;
+		rules.Add(rule);
+	}
+
+	static void AddOutbound(string name)
+	{
+		dynamic policy = Policy();
+		dynamic rules = policy.Rules;
+		try { rules.Remove(name); } catch { }
+		dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+		rule.Name = name;
+		rule.Description = "GUARDEX clipboard wallet swap. Outbound is stopped.";
+		rule.Grouping = RuleGroup;
+		rule.Action = 0;
+		rule.Direction = 2;
+		rule.Enabled = true;
+		rule.InterfaceTypes = "All";
+		rule.RemoteAddresses = "*";
 		rule.Protocol = 256;
 		rule.Profiles = 0x7FFFFFFF;
 		rules.Add(rule);
@@ -399,6 +550,21 @@ sealed class Enforcer
 		if (NextStrikes(2, false, true) != 3) failures.Add("confirm did not step the strike");
 		if (Minutes(1) != 10 || Minutes(2) != 30 || Minutes(3) != 120 || Minutes(4) != 720)
 			failures.Add("block lengths");
+		if (OutboundHoldMinutes() != 720) failures.Add("outbound hold");
+		var stopped = OutboundPhrase(true, true, true);
+		var reported = OutboundPhrase(false, true, false);
+		var unelevated = OutboundPhrase(true, false, false);
+		var missed = OutboundPhrase(true, true, false);
+		if (!stopped.Contains("stopped", StringComparison.Ordinal) || !stopped.Contains("Release", StringComparison.Ordinal))
+			failures.Add("outbound phrase");
+		if (!reported.Contains("not stopped", StringComparison.Ordinal) || !unelevated.Contains("not stopped", StringComparison.Ordinal))
+			failures.Add("outbound phrase when it cannot block");
+		if (!missed.Contains("did not take", StringComparison.Ordinal)) failures.Add("outbound rule failure");
+		if (stopped.Contains("put back", StringComparison.OrdinalIgnoreCase)) failures.Add("outbound phrase restores");
+		if (!TaggedRule(RuleName(OutboundKey), "")) failures.Add("outbound rule name");
+		if (!TcpTable.CutRow("203.0.113.8", 5, 52341, false)) failures.Add("outbound session");
+		if (TcpTable.CutRow("203.0.113.8", 5, 3389, true)) failures.Add("listening session");
+		if (TcpTable.CutRow("127.0.0.1", 5, 52341, false)) failures.Add("loopback session");
 		if (!TaggedRule("other", RuleGroup)) failures.Add("group tag");
 		if (!TaggedRule("GUARDEX 203.0.113.8", "")) failures.Add("address name");
 		if (!TaggedRule("GUARDEX-Telemetry WerFault.exe", "")) failures.Add("telemetry name");

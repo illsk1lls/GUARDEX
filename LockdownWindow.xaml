@@ -1,0 +1,35 @@
+<Window x:Class="Guardex.LockdownWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GUARDEX lockdown"
+        Width="560" SizeToContent="Height"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Background="#121611"
+        Foreground="#E4ECDF"
+        FontFamily="Segoe UI"
+        Topmost="True"
+        ShowInTaskbar="True"
+        ShowActivated="True">
+  <Window.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Window.Resources>
+  <Border Background="#121611" BorderBrush="#8F4A4A" BorderThickness="2">
+    <DockPanel>
+      <Grid DockPanel.Dock="Top" Height="40" Background="#3A2424">
+        <TextBlock Text="GUARDEX  lockdown" Margin="16,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+      </Grid>
+      <StackPanel Margin="28,24,28,28">
+        <TextBlock x:Name="Headline" TextWrapping="Wrap" FontSize="28" FontWeight="SemiBold" Foreground="#F0C9C9"/>
+        <TextBlock x:Name="Detail" TextWrapping="Wrap" Margin="0,16,0,0" Foreground="#E4ECDF" FontSize="15" LineHeight="22"/>
+        <TextBlock Text="Traffic stays stopped until you end lockdown." Margin="0,16,0,0" Foreground="#8EA088"/>
+        <Button Content="End lockdown" Click="OnEnd" Margin="0,20,0,0" Height="40" HorizontalAlignment="Stretch"/>
+      </StackPanel>
+    </DockPanel>
+  </Border>
+</Window>

@@ -18,6 +18,7 @@ sealed class Shell
 	readonly NotifyIcon _icon;
 	readonly FlyoutWindow _flyout;
 	readonly MainWindow _window;
+	readonly LockdownWindow _lock;
 	bool _enabled;
 
 	[DllImport("user32.dll")]
@@ -38,10 +39,16 @@ sealed class Shell
 		_posture = new PostureWatch(_store, _judge);
 		_remote = new RemoteGuard(_store);
 		_launch = new LaunchGuard(_store, _judge);
-		_clip = new ClipGuard(_store);
+		_clip = new ClipGuard(_store, _enforcer);
 		_store.Canary = Environment.GetEnvironmentVariable("GUARDEX_CANARY") ?? "";
 		_flyout = new FlyoutWindow();
 		_window = new MainWindow(_store);
+		_lock = new LockdownWindow(() => _enforcer.HasOutboundHold);
+		_lock.EndRequested += () =>
+		{
+			_enforcer.EndLockdown();
+			_lock.HideDown();
+		};
 		_icon = new NotifyIcon
 		{
 			Visible = true,
@@ -68,7 +75,7 @@ sealed class Shell
 		_posture.Alerted += Balloon;
 		_remote.Alerted += Balloon;
 		_launch.Alerted += Balloon;
-		_clip.Alerted += Balloon;
+		_clip.Alerted += OnClip;
 		_window.EnforceRequested += on => _enforcer.SetEnabled(on);
 		_window.ReleaseRequested += src => _enforcer.Release(src);
 		_window.AllowChanged += (id, on) => _remote.SetAllowed(id, on);
@@ -101,6 +108,7 @@ sealed class Shell
 			_launch.Stop();
 			_clip.Stop();
 			_enforcer.Shutdown();
+			_lock.AllowClose();
 			_icon.Visible = false;
 			_icon.Dispose();
 		};
@@ -304,9 +312,26 @@ sealed class Shell
 		_launch.Stop();
 		_clip.Stop();
 		_enforcer.Shutdown();
+		_lock.AllowClose();
 		_window.AllowClose();
 		_window.Close();
 		System.Windows.Application.Current.Shutdown();
+	}
+
+	void OnClip(string text)
+	{
+		Balloon(text);
+		var app = System.Windows.Application.Current;
+		if (app == null) return;
+		app.Dispatcher.BeginInvoke(new Action(() =>
+		{
+			try
+			{
+				_flyout.Hide();
+				_lock.ShowFront(text);
+			}
+			catch { }
+		}));
 	}
 
 	void Balloon(string text)

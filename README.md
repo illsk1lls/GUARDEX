@@ -22,7 +22,7 @@ Set `GUARDEX_ENFORCE` to `0` to report blocks without creating firewall rules.
 
 ## Log
 
-The Blocks page only shows what is still active. When a hold expires, or the model steps a soft block down, that row leaves the list. The Log page keeps the line: the address, that the block was lifted, and why. A model timeout is recorded there too, and so is each confirmation.
+The Blocks page only shows what is still active. When a hold expires, or the model steps a soft block down, that row leaves the list. The Log page keeps the line: the address, that the block was lifted, and why. A clipboard stop is recorded there without the wallet address. A model timeout is recorded there too, and so is each confirmation.
 
 The same lines are written to `%LocalAppData%\Guardex\log.txt` and kept across restarts. The file holds the latest 400 lines.
 
@@ -46,7 +46,7 @@ $env:GUARDEX_API_KEY = "none"
 
 If the endpoint returns 401 or 403, a sign-in window offers three modes. None sends no authorization header. API sends a bearer token. Basic (NPM) sends a username and password. Remember on this PC stores that choice for the endpoint.
 
-The model does not run commands. It does not lift a hard signal, such as the canary, a known scanner signature, or several sensitive paths from one address. On a gray or soft block it may move the source one band. On a watch-level startup item it may raise a malicious verdict to block. It does not delete startup items.
+The model does not run commands. It does not lift a hard signal, such as the canary, a known scanner signature, several sensitive paths from one address, or a clipboard wallet swap. A clipboard swap is not sent to the model. On a gray or soft block it may move the source one band. On a watch-level startup item it may raise a malicious verdict to block. It does not delete startup items.
 
 ## Startup items
 
@@ -78,9 +78,17 @@ A page script does not receive the filesystem. If the browser starts a shell, a 
 
 To allow a program by name, add it to `%LocalAppData%\Guardex\launch-allow.txt`. Write `0` to `%LocalAppData%\Guardex\launch-stop.txt` to report without stopping.
 
-Programs running from Temp or Downloads that open an outbound connection are reported. Browser traffic is not blocked. Packet contents are not read.
+Programs running from Temp or Downloads that open an outbound connection are reported. That report does not block the browser. Packet contents are not read.
 
-A clipboard value that is a wallet address is restored if a different address of the same kind replaces it within one second.
+## Clipboard
+
+GUARDEX watches the clipboard for a wallet address: Ethereum (`0x` and 40 hex characters), Bitcoin (`1`, `3`, or `bc1`), or Litecoin (`L`, `M`, or `ltc1`). If a different address of the same kind replaces it within one second, the clipboard is cleared. Nothing is written in its place. The earlier address is not put back.
+
+Outbound traffic then stops for 12 hours. With elevation and blocking on, that stop is a Windows Firewall rule in the GUARDEX group, named so it is removed with the other temporary rules. IPv4 connections this PC already opened are reset, and they stay reset while the stop is up. The program that owned the clipboard is stopped. Windows itself, Explorer, Defender, and GUARDEX are left running. A session that arrived on a listening port, such as Remote Desktop, is left up. An already-open IPv6 connection, or an already-open UDP flow such as QUIC, is not reset. New outbound traffic is blocked, including the browser. While the stop is up, a wallet address that appears on the clipboard again is cleared. Other clipboard text is left as it is.
+
+GUARDEX opens a lockdown window in the center of the screen and keeps it in front of other windows. When the stop is in place and the program was stopped, the window leads with nothing was sent, says the process was stopped, and names that program. End lockdown on that window lifts the stop. Releasing the all outbound row on the Blocks page, turning blocking off, or exiting also lifts it. The window stays up until one of those happens. A beep and a tray balloon carry the same notice. The log line names the process and does not include the address.
+
+Without elevation, or with `GUARDEX_ENFORCE` set to `0`, the clipboard is still cleared. The lockdown window says when traffic was not stopped, or when the process was left running or could not be stopped.
 
 ## Browser
 

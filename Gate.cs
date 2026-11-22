@@ -8,7 +8,8 @@ namespace Guardex;
 
 // A page script already has no filesystem rights. This watches the moment that
 // script gets a process started, or a dropped program calls out, or the
-// clipboard wallet address changes on its own.
+// clipboard wallet address changes on its own. A swap is cleared. The earlier
+// address is not written back.
 static class LaunchRules
 {
 	static readonly HashSet<string> Browsers = new(StringComparer.OrdinalIgnoreCase)
@@ -238,6 +239,48 @@ static class ClipRules
 		return family.Length > 0 && family == Family(right);
 	}
 
+	// A detected swap is cleared. Nothing, including the earlier address, is written back.
+	public static string Response(bool swap) => swap ? "clear" : "leave";
+
+	public static bool SpareProcess(string name)
+	{
+		if (name.Length == 0) return true;
+		return name.ToLowerInvariant() switch
+		{
+			"system" or "idle" or "registry" or "smss" or "csrss" or "wininit" or "winlogon"
+				or "services" or "lsass" or "svchost" or "dwm" or "fontdrvhost" or "sihost"
+				or "explorer" or "guardex" or "msmpeng" or "securityhealthservice" or "nissrv" => true,
+			_ => false
+		};
+	}
+
+	public static string Lead(bool trafficStopped, bool processStopped, bool spared, string name)
+	{
+		var who = name.Length == 0 ? "" : " (" + name + ")";
+		if (trafficStopped && processStopped)
+			return "Nothing was sent. The process was stopped" + who + ".";
+		if (trafficStopped && spared)
+			return name.Length == 0
+				? "Nothing was sent. The process was left running."
+				: "Nothing was sent. " + name + " was left running.";
+		if (trafficStopped)
+			return name.Length == 0
+				? "Nothing was sent. The process could not be stopped."
+				: "Nothing was sent. " + name + " could not be stopped.";
+		if (processStopped)
+			return "The process was stopped" + who + ". Traffic was not stopped.";
+		if (spared && name.Length > 0)
+			return name + " was left running. Traffic was not stopped.";
+		return "The clipboard was cleared. Traffic was not stopped.";
+	}
+
+	public static string SwapNotice(string traffic, bool trafficStopped, bool processStopped, bool spared, string name)
+	{
+		if (traffic.Length == 0) traffic = "Outbound traffic is stopped.";
+		var detail = "A clipboard wallet address was swapped. The clipboard was cleared. Nothing was written back. " + traffic;
+		return Lead(trafficStopped, processStopped, spared, name) + "\n" + detail;
+	}
+
 	public static string Family(string text)
 	{
 		if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && text.Length == 42 && Hex(text, 2))
@@ -300,6 +343,17 @@ static class ClipRules
 		if (Swap("hello", EthB, 200)) failures.Add("plain text");
 		if (Family(BtcA) != "btc" || Family(BtcB) != "btc") failures.Add("btc family");
 		if (Swap(BtcA, BtcB, 300) != true) failures.Add("fast btc swap");
+		if (Response(true) != "clear" || Response(false) != "leave") failures.Add("swap response");
+		if (Lead(true, true, false, "") != "Nothing was sent. The process was stopped.") failures.Add("lockdown lead");
+		if (Lead(true, true, false, "clipper") != "Nothing was sent. The process was stopped (clipper).") failures.Add("named process");
+		if (!SpareProcess("svchost") || !SpareProcess("Guardex") || SpareProcess("GuardexBrowser")) failures.Add("spare process");
+		var notice = SwapNotice("Outbound traffic is stopped.", true, true, false, "");
+		var lead = notice.Split('\n')[0];
+		if (lead != "Nothing was sent. The process was stopped.") failures.Add("lockdown notice");
+		if (!notice.Contains("cleared", StringComparison.Ordinal) || !notice.Contains("Nothing was written back", StringComparison.Ordinal))
+			failures.Add("swap notice");
+		if (notice.Contains("put back", StringComparison.OrdinalIgnoreCase) || notice.Contains(EthA, StringComparison.Ordinal))
+			failures.Add("swap notice writes an address");
 		return failures.Count == 0 ? "PASS" : string.Join("; ", failures);
 	}
 }
@@ -531,11 +585,10 @@ sealed class LaunchGuard
 sealed class ClipGuard
 {
 	readonly SessionStore _store;
+	readonly Enforcer _enforcer;
 	readonly object _look = new();
 	string _prev = "";
 	DateTime _prevUtc;
-	string _held = "";
-	DateTime _heldUtc;
 	string _text = "";
 	DateTime _until;
 	DateTime _said;
@@ -543,7 +596,11 @@ sealed class ClipGuard
 
 	public event Action<string>? Alerted;
 
-	public ClipGuard(SessionStore store) => _store = store;
+	public ClipGuard(SessionStore store, Enforcer enforcer)
+	{
+		_store = store;
+		_enforcer = enforcer;
+	}
 
 	public void Hook()
 	{
@@ -564,19 +621,22 @@ sealed class ClipGuard
 
 	void Look()
 	{
-		if (!System.Windows.Clipboard.ContainsText()) return;
-		var text = System.Windows.Clipboard.GetText().Trim();
-		if (text.Length == 0) return;
+		var text = "";
+		try
+		{
+			if (System.Windows.Clipboard.ContainsText())
+				text = System.Windows.Clipboard.GetText().Trim();
+		}
+		catch { return; }
 		lock (_look)
 		{
-			if (text == _held && DateTime.UtcNow - _heldUtc < TimeSpan.FromSeconds(2))
+			if (text.Length > 0 && _enforcer.HasOutboundHold && ClipRules.Family(text).Length > 0 && ClipRules.Response(true) == "clear")
 			{
-				_prev = text;
-				_prevUtc = DateTime.UtcNow;
+				Wipe();
 				Publish();
 				return;
 			}
-			if (text == _prev)
+			if (text.Length == 0 || text == _prev)
 			{
 				Publish();
 				return;
@@ -584,18 +644,20 @@ sealed class ClipGuard
 			var elapsed = _prev.Length == 0 ? int.MaxValue : (int)(DateTime.UtcNow - _prevUtc).TotalMilliseconds;
 			if (ClipRules.Swap(_prev, text, elapsed))
 			{
-				var keep = _prev;
-				System.Windows.Clipboard.SetText(keep);
-				_held = keep;
-				_heldUtc = DateTime.UtcNow;
-				_text = "A clipboard wallet address was swapped. The earlier address was put back.";
-				_until = DateTime.UtcNow.AddMinutes(1);
+				ClipOwner.Result owner;
+				try { owner = ClipOwner.Stop(); }
+				catch { owner = new ClipOwner.Result("", false, false); }
+				if (ClipRules.Response(true) == "clear") Wipe();
+				var traffic = _enforcer.HaltOutbound("A clipboard wallet address was swapped.");
+				var trafficStopped = traffic.StartsWith("Outbound traffic is stopped", StringComparison.Ordinal);
+				_text = ClipRules.SwapNotice(traffic, trafficStopped, owner.Stopped, owner.Spared, owner.Name);
+				_until = _enforcer.HasOutboundHold ? DateTime.MinValue : DateTime.UtcNow.AddMinutes(1);
 				if (DateTime.UtcNow - _said > TimeSpan.FromMinutes(1))
 				{
 					_said = DateTime.UtcNow;
-					_store.Note(_text);
-					Alerted?.Invoke(_text);
+					_store.Note(_text.Replace("\n", " "));
 				}
+				Alerted?.Invoke(_text);
 				Publish();
 				return;
 			}
@@ -605,7 +667,52 @@ sealed class ClipGuard
 		}
 	}
 
-	void Publish() => _store.SetClipAlert(DateTime.UtcNow < _until ? _text : "");
+	static void Wipe()
+	{
+		try { System.Windows.Clipboard.Clear(); } catch { }
+	}
+
+	void Publish()
+	{
+		var show = _text.Length > 0 && (_enforcer.HasOutboundHold || DateTime.UtcNow < _until);
+		_store.SetClipAlert(show ? _text.Replace("\n", " ") : "");
+	}
+}
+
+static class ClipOwner
+{
+	[DllImport("user32.dll")]
+	static extern IntPtr GetClipboardOwner();
+
+	[DllImport("user32.dll")]
+	static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+
+	public readonly record struct Result(string Name, bool Stopped, bool Spared);
+
+	public static Result Stop()
+	{
+		var hwnd = GetClipboardOwner();
+		if (hwnd == IntPtr.Zero) return new Result("", false, false);
+		GetWindowThreadProcessId(hwnd, out var pid);
+		if (pid <= 4 || pid == (uint)Environment.ProcessId) return new Result("", false, true);
+		var name = "";
+		try
+		{
+			using var proc = Process.GetProcessById((int)pid);
+			name = proc.ProcessName;
+			if (ClipRules.SpareProcess(name)) return new Result(name, false, true);
+			proc.Kill(true);
+			return new Result(name, true, false);
+		}
+		catch (InvalidOperationException)
+		{
+			return new Result(name, name.Length > 0, false);
+		}
+		catch
+		{
+			return new Result(name, false, false);
+		}
+	}
 }
 
 static class ProcList

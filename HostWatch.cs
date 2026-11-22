@@ -253,7 +253,80 @@ static class TcpTable
 		return $"{b[0]}.{b[1]}.{b[2]}.{b[3]}";
 	}
 
+	public static int CutOutbound()
+	{
+		var size = 0;
+		GetExtendedTcpTable(IntPtr.Zero, ref size, true, AfInet, OwnerPidAll, 0);
+		if (size <= 0) return 0;
+		var buf = Marshal.AllocHGlobal(size);
+		try
+		{
+			var rc = GetExtendedTcpTable(buf, ref size, true, AfInet, OwnerPidAll, 0);
+			if (rc != 0) return 0;
+			var count = Marshal.ReadInt32(buf);
+			var rowSize = Marshal.SizeOf<MibTcpRowOwnerPid>();
+			var listening = new HashSet<int>();
+			var ptr = buf + 4;
+			for (var i = 0; i < count; i++)
+			{
+				var row = Marshal.PtrToStructure<MibTcpRowOwnerPid>(ptr);
+				if (row.State == 2) listening.Add(Port(row.LocalPort));
+				ptr += rowSize;
+			}
+			var cut = 0;
+			ptr = buf + 4;
+			for (var i = 0; i < count; i++)
+			{
+				var row = Marshal.PtrToStructure<MibTcpRowOwnerPid>(ptr);
+				ptr += rowSize;
+				var localPort = Port(row.LocalPort);
+				if (!CutRow(Ip(row.RemoteAddr), (int)row.State, localPort, listening.Contains(localPort))) continue;
+				var entry = new MibTcpRow
+				{
+					State = 12,
+					LocalAddr = row.LocalAddr,
+					LocalPort = row.LocalPort,
+					RemoteAddr = row.RemoteAddr,
+					RemotePort = row.RemotePort
+				};
+				if (SetTcpEntry(ref entry) == 0) cut++;
+			}
+			return cut;
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(buf);
+		}
+	}
+
+	public static bool CutRow(string remote, int state, int localPort, bool localPortListening)
+	{
+		if (localPort <= 0 || localPortListening || !Sends(remote, state)) return false;
+		return true;
+	}
+
+	public static bool Sends(string remote, int state)
+	{
+		if (state is < 3 or > 10) return false;
+		if (string.IsNullOrWhiteSpace(remote)) return false;
+		if (remote is "0.0.0.0" or "127.0.0.1" or "::1" or "::") return false;
+		return !(IPAddress.TryParse(remote, out var addr) && IPAddress.IsLoopback(addr));
+	}
+
+	[DllImport("iphlpapi.dll")]
+	static extern uint SetTcpEntry(ref MibTcpRow row);
+
 	public readonly record struct Row(string Local, int LocalPort, string Remote, int RemotePort, int State, int Pid);
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct MibTcpRow
+	{
+		public uint State;
+		public uint LocalAddr;
+		public uint LocalPort;
+		public uint RemoteAddr;
+		public uint RemotePort;
+	}
 
 	[StructLayout(LayoutKind.Sequential)]
 	struct MibTcpRowOwnerPid
