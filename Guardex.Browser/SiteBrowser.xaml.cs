@@ -197,6 +197,7 @@ public partial class SiteBrowser : UserControl
 	string _passSite = "";
 	string _passStamp = "";
 	string? _keptAddress;
+	string? _typedFile;
 	VaultDesk.SavedLogin[] _logins = [];
 	readonly Dictionary<string, string> _shownPasses = new(StringComparer.Ordinal);
 	readonly List<System.Windows.Controls.TextBox> _passBoxes = new();
@@ -437,6 +438,16 @@ public partial class SiteBrowser : UserControl
 				AskMagnet(navUri);
 				return;
 			}
+			if (LinkRules.IsLocalFile(navUri))
+			{
+				var typed = _typedFile != null && LinkRules.SameFile(navUri, _typedFile);
+				if (typed) _typedFile = null;
+				else if (args.NavigationKind is not (CoreWebView2NavigationKind.Reload or CoreWebView2NavigationKind.BackOrForward))
+				{
+					args.Cancel = true;
+					return;
+				}
+			}
 			if (_parking || (_parked && (navUri.Length == 0 || navUri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))))
 				return;
 			if (tab == Active) CloseSettings();
@@ -517,8 +528,17 @@ public partial class SiteBrowser : UserControl
 			CloseSuggest();
 		};
 		core.WindowCloseRequested += (_, _) => Dispatcher.BeginInvoke(() => CloseTab(tab));
+		core.FrameNavigationStarting += (_, frameArgs) =>
+		{
+			if (LinkRules.IsLocalFile(frameArgs.Uri)) frameArgs.Cancel = true;
+		};
 		core.NewWindowRequested += (_, args) =>
 		{
+			if (LinkRules.IsLocalFile(args.Uri))
+			{
+				args.Handled = true;
+				return;
+			}
 			var deferral = args.GetDeferral();
 			_ = OpenPopup(args, deferral);
 		};
@@ -789,6 +809,26 @@ public partial class SiteBrowser : UserControl
 			return;
 		}
 		CloseSettings();
+		if (LinkRules.LooksLikeFile(typed))
+		{
+			if (!LinkRules.TryTypedFile(typed, out var fileUrl, out var fileError))
+			{
+				SetNote(fileError);
+				return;
+			}
+			var fileCore = Active?.View.CoreWebView2;
+			if (fileCore == null)
+			{
+				SetNote("The page is not ready.");
+				return;
+			}
+			SetNote("");
+			_historyOpen = false;
+			CloseSuggest();
+			_typedFile = fileUrl;
+			fileCore.Navigate(fileUrl);
+			return;
+		}
 		if (!LinkRules.TryPage(Address.Text, out var url, out var error))
 		{
 			SetNote(error);
@@ -887,7 +927,7 @@ public partial class SiteBrowser : UserControl
 		BookBar.Visibility = !full && _bookBar && _bookmarks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 		BookBarItem.Content = _bookBar ? "Hide bookmarks bar" : "Show bookmarks bar";
 		var url = core?.Source ?? "";
-		var blank = !SiteDesk.IsPage(url);
+		var blank = !SiteDesk.IsPage(url) && !LinkRules.IsLocalFile(url);
 		HomePane.Visibility = !_settingsOpen && blank && !_historyOpen ? Visibility.Visible : Visibility.Collapsed;
 		HistoryPane.Visibility = !_settingsOpen && _historyOpen ? Visibility.Visible : Visibility.Collapsed;
 		ApplyViews(false);
@@ -899,7 +939,7 @@ public partial class SiteBrowser : UserControl
 		if (!Address.IsKeyboardFocusWithin)
 		{
 			_addressLock = true;
-			Address.Text = _keptAddress ?? (SiteDesk.IsPage(url) ? url : "");
+			Address.Text = _keptAddress ?? (SiteDesk.IsPage(url) ? url : LinkRules.LocalText(url));
 			_addressLock = false;
 			if (_keptAddress == null) CloseSuggest();
 		}
@@ -2923,6 +2963,10 @@ public partial class SiteBrowser : UserControl
 		HomeProviderPopup.IsOpen = false;
 		GoUrl(HomeDesk.SearchUrl(HomeDesk.Provider, query));
 	}
+
+	void OnHomeImport(object sender, RoutedEventArgs e) => ImportHome();
+
+	void OnHomeExport(object sender, RoutedEventArgs e) => ExportHome();
 
 	void ImportHome()
 	{

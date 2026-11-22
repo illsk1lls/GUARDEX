@@ -147,9 +147,15 @@ static class HomeDesk
 	{
 		try
 		{
-			var count = Apply(json);
+			var read = Read(json);
+			if (read.Links.Count == 0)
+			{
+				error = "That file has no shortcuts to import.";
+				return false;
+			}
+			ApplyRead(read);
 			Save();
-			error = "Imported " + count + " shortcuts.";
+			error = read.Links.Count == 1 ? "Imported 1 shortcut." : "Imported " + read.Links.Count + " shortcuts.";
 			return true;
 		}
 		catch
@@ -193,8 +199,11 @@ static class HomeDesk
 		if (TryLink("x", "file:///c/windows", out _, out _)) failures.Add("file url");
 		var text = WriteText("bing", [new HomeLink("Example", "https://example.com/"), new HomeLink("Skip", "about:blank")]);
 		var read = Read(text);
-		if (read.Provider != "bing" || read.Links.Count != 1 || read.Links[0].Url != "https://example.com/")
+		if (!read.HasProvider || read.Provider != "bing" || read.Links.Count != 1 || read.Links[0].Url != "https://example.com/")
 			failures.Add("roundtrip");
+		var quick = Read("""[{"name":"Box","url":"http://nas:31014/"},{"name":"Skip","url":"about:blank"}]""");
+		if (quick.HasProvider || quick.Links.Count != 1 || quick.Links[0].Name != "Box" || quick.Links[0].Url != "http://nas:31014/")
+			failures.Add("quicklaunch");
 		var many = new List<HomeLink>();
 		for (var i = 0; i < 50; i++) many.Add(new HomeLink("n" + i, "https://example.com/" + i));
 		if (Read(WriteText("google", many)).Links.Count != Max) failures.Add("cap");
@@ -204,7 +213,13 @@ static class HomeDesk
 	static int Apply(string? json)
 	{
 		var read = Read(json);
-		Provider = read.Provider;
+		ApplyRead(read);
+		return Items.Count;
+	}
+
+	static void ApplyRead(HomeFile read)
+	{
+		if (read.HasProvider) Provider = read.Provider;
 		Items.Clear();
 		foreach (var link in read.Links)
 		{
@@ -212,7 +227,6 @@ static class HomeDesk
 			item.RefreshIcon();
 			Items.Add(item);
 		}
-		return Items.Count;
 	}
 
 	static void Write(string provider, IEnumerable<HomeShortcut> items)
@@ -236,17 +250,57 @@ static class HomeDesk
 		public List<HomeLink> Shortcuts { get; set; } = [];
 	}
 
-	static (string Provider, List<HomeLink> Links) Read(string? json)
+	readonly record struct HomeFile(bool HasProvider, string Provider, List<HomeLink> Links);
+
+	static HomeFile Read(string? json)
 	{
-		var shape = string.IsNullOrWhiteSpace(json) ? new FileShape() : JsonSerializer.Deserialize<FileShape>(json) ?? new FileShape();
-		var links = new List<HomeLink>();
-		foreach (var item in shape.Shortcuts)
+		if (string.IsNullOrWhiteSpace(json)) return new HomeFile(false, "google", []);
+		using var doc = JsonDocument.Parse(json);
+		var root = doc.RootElement;
+		var hasProvider = false;
+		var provider = "google";
+		JsonElement list;
+		if (root.ValueKind == JsonValueKind.Array)
+			list = root;
+		else if (root.ValueKind == JsonValueKind.Object)
 		{
-			if (!TryLink(item.Name, item.Url, out var link, out _)) continue;
+			if (Field(root, "provider", out var providerValue) && providerValue.ValueKind == JsonValueKind.String)
+			{
+				hasProvider = true;
+				provider = NormalizeProvider(providerValue.GetString());
+			}
+			if (!Field(root, "shortcuts", out list) || list.ValueKind != JsonValueKind.Array)
+				return new HomeFile(hasProvider, provider, []);
+		}
+		else
+			return new HomeFile(false, "google", []);
+		var links = new List<HomeLink>();
+		foreach (var item in list.EnumerateArray())
+		{
+			if (item.ValueKind != JsonValueKind.Object) continue;
+			var name = Field(item, "name", out var nameValue) && nameValue.ValueKind == JsonValueKind.String ? nameValue.GetString() : "";
+			var url = "";
+			if (Field(item, "url", out var urlValue) && urlValue.ValueKind == JsonValueKind.String) url = urlValue.GetString() ?? "";
+			else if (Field(item, "href", out var href) && href.ValueKind == JsonValueKind.String) url = href.GetString() ?? "";
+			if (!TryLink(name, url, out var link, out _)) continue;
 			links.Add(link);
 			if (links.Count >= Max) break;
 		}
-		return (NormalizeProvider(shape.Provider), links);
+		return new HomeFile(hasProvider, provider, links);
+	}
+
+	static bool Field(JsonElement obj, string name, out JsonElement value)
+	{
+		foreach (var prop in obj.EnumerateObject())
+		{
+			if (prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+			{
+				value = prop.Value;
+				return true;
+			}
+		}
+		value = default;
+		return false;
 	}
 
 	static string WriteText(string provider, IReadOnlyList<HomeLink> links) =>

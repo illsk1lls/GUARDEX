@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Text.Json;
 
@@ -32,6 +33,82 @@ static class LinkRules
 		}
 		url = uri.ToString();
 		return true;
+	}
+
+	public static bool LooksLikeFile(string? text)
+	{
+		var raw = TrimPath(text);
+		if (raw.Length == 0 || raw.Length > 2000) return false;
+		if (raw.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) return true;
+		if (raw.Length >= 3 && char.IsLetter(raw[0]) && raw[1] == ':' && raw[2] is '\\' or '/') return true;
+		return raw.StartsWith(@"\\", StringComparison.Ordinal)
+			&& !raw.StartsWith(@"\\.\", StringComparison.Ordinal)
+			&& !raw.StartsWith(@"\\?\", StringComparison.Ordinal);
+	}
+
+	public static bool TryTypedFile(string? text, out string url, out string error)
+	{
+		url = "";
+		error = "";
+		var raw = TrimPath(text);
+		if (!LooksLikeFile(raw)) return false;
+		string path;
+		try
+		{
+			if (raw.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+			{
+				if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri) || !uri.IsFile)
+				{
+					error = "That file address could not be opened.";
+					return false;
+				}
+				path = uri.LocalPath;
+				if (uri.Host.Length == 1 && char.IsLetter(uri.Host[0]))
+					path = char.ToUpperInvariant(uri.Host[0]) + ":" + path.Replace('/', '\\');
+			}
+			else path = raw;
+			path = Path.GetFullPath(path);
+		}
+		catch
+		{
+			error = "That file address could not be opened.";
+			return false;
+		}
+		if (Directory.Exists(path))
+		{
+			error = "That path is a folder.";
+			return false;
+		}
+		if (!File.Exists(path))
+		{
+			error = "That file was not found.";
+			return false;
+		}
+		url = new Uri(path).AbsoluteUri;
+		error = "";
+		return true;
+	}
+
+	public static bool IsLocalFile(string? url) =>
+		Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.IsFile && uri.LocalPath.Length > 0;
+
+	public static string LocalText(string? url)
+	{
+		if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !uri.IsFile) return "";
+		return uri.LocalPath;
+	}
+
+	public static bool SameFile(string? left, string? right)
+	{
+		if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b)) return false;
+		return a.IsFile && b.IsFile && string.Equals(a.LocalPath, b.LocalPath, StringComparison.OrdinalIgnoreCase);
+	}
+
+	static string TrimPath(string? text)
+	{
+		var raw = (text ?? "").Trim();
+		if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"') raw = raw[1..^1].Trim();
+		return raw;
 	}
 
 	public static string Rate(string pageUrl, string requestUrl, string type, string initiatorUrl, out string why)
@@ -143,6 +220,28 @@ static class LinkRules
 		if (!TryPage("foxnews.com", out var page, out _)) failures.Add("bare host");
 		if (!page.StartsWith("https://foxnews.com", StringComparison.Ordinal)) failures.Add("scheme " + page);
 		if (TryPage("file:///c/windows", out _, out _)) failures.Add("file url");
+		if (LooksLikeFile("example.com") || LooksLikeFile(@"\\.\pipe\a")) failures.Add("file look");
+		var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+		if (!LooksLikeFile(windows) || TryTypedFile(windows, out _, out var folder) || folder != "That path is a folder.")
+			failures.Add("folder");
+		if (TryTypedFile(@"C:\no-such-guardex-file.html", out _, out var missing) || missing != "That file was not found.")
+			failures.Add("missing");
+		var temp = Path.GetTempFileName();
+		try
+		{
+			if (!TryTypedFile(temp, out var opened, out _) || !IsLocalFile(opened) || !SameFile(opened, new Uri(temp).AbsoluteUri))
+				failures.Add("temp file");
+			var slashed = temp.Replace('\\', '/');
+			if (!TryTypedFile(slashed, out var slashUrl, out _) || !SameFile(slashUrl, opened)) failures.Add("slash");
+			if (!TryTypedFile("\"" + temp + "\"", out var quoted, out _) || !SameFile(quoted, opened)) failures.Add("quoted");
+			var uriText = new Uri(temp).AbsoluteUri;
+			if (!TryTypedFile(uriText, out var fromUri, out _) || !SameFile(fromUri, opened)) failures.Add("file uri");
+			if (LocalText(opened) != Path.GetFullPath(temp)) failures.Add("shown " + LocalText(opened));
+		}
+		finally
+		{
+			try { File.Delete(temp); } catch { }
+		}
 		var same = Rate("https://www.foxnews.com/", "https://static.foxnews.com/a.js", "Script", "https://www.foxnews.com/", out _);
 		if (same != "allow") failures.Add("same site was " + same);
 		var third = Rate("https://www.foxnews.com/", "https://cdn.optimizely.com/js/1.js", "Script", "https://www.foxnews.com/", out var thirdWhy);
